@@ -1,10 +1,18 @@
 [project]
 name = "hydrologeez"
-version = "0.1.2"
+version = "0.1.3"
 description = "hydrologeez"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "ctrl-freak==0.2.0",
+    "equinox>=0.13.8",
+    "jax>=0.10.2",
+    "optax>=0.2.8",
+]
+
+[project.optional-dependencies]
+cuda = ["jax[cuda12]"]
 
 
 [build-system]
@@ -13,10 +21,11 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "pytest>=8.3",       # tests
+    "pytest>=8.3", # tests
     "pytest-cov>=6.2.1",
-    "ruff>=0.12",        # linter + formatter
+    "ruff>=0.12", # linter + formatter
     "bump-my-version>=1.2.7",
+    "ty>=0.0.55",
 ]
 
 # -----------------------
@@ -24,7 +33,7 @@ dev = [
 # -----------------------
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py313"
 # extend-exclude = ["notebooks/", "experiments/"]
 
 [tool.ruff.lint]
@@ -62,7 +71,7 @@ addopts = ["--strict-markers", "--strict-config", "-ra"]
 # Bump My Version
 # -----------------------
 [tool.bumpversion]
-current_version = "0.1.2"
+current_version = "0.1.3"
 commit = false
 tag = false
 allow_dirty = true
