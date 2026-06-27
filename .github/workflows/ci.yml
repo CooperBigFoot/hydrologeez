@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: lint + type + test (py3.13, x64)
+    runs-on: ubuntu-latest
+    env:
+      JAX_ENABLE_X64: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Ruff format check
+        run: uv run ruff format --check
+
+      - name: Ruff lint
+        run: uv run ruff check
+
+      - name: Type check (ty)
+        run: uv run ty check
+
+      - name: Pytest
+        run: uv run pytest
