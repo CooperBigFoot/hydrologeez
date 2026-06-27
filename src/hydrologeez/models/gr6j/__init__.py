@@ -25,3 +25,7 @@ __all__ = [
     "production_store_update",
     "routing_store_update",
 ]
+
+from hydrologeez.models.gr6j.model import GR6J, GR6JFluxes, GR6JForcing  # noqa: E402
+
+__all__ += ["GR6J", "GR6JFluxes", "GR6JForcing"]
