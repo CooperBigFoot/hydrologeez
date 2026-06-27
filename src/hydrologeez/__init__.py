@@ -12,7 +12,7 @@ enforce_float64()
 from hydrologeez.observation import default_streamflow_observation  # noqa: E402
 from hydrologeez.ssm import StateSpaceModel  # noqa: E402
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 
 __all__ = [
     "StateSpaceModel",
