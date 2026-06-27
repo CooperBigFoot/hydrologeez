@@ -1,11 +1,11 @@
 [project]
 name = "hydrologeez"
-version = "0.1.7"
+version = "0.1.9"
 description = "hydrologeez"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "ctrl-freak==0.2.0",
+    "ctrl-freak>=0.2.0",
     "equinox>=0.13.8",
     "jax>=0.10.2",
     "optax>=0.2.8",
@@ -71,7 +71,7 @@ addopts = ["--strict-markers", "--strict-config", "-ra"]
 # Bump My Version
 # -----------------------
 [tool.bumpversion]
-current_version = "0.1.7"
+current_version = "0.1.9"
 commit = false
 tag = false
 allow_dirty = true
@@ -87,4 +87,4 @@ search = '__version__ = "{current_version}"'
 replace = '__version__ = "{new_version}"'
 
 [tool.uv.sources]
-# ctrl-freak = { git = "https://github.com/hydrosolutions/ctrl-freak.git", rev = "main" } # example of how to add a git dependency
+ctrl-freak = { git = "https://github.com/hydrosolutions/ctrl-freak.git", rev = "5a693000f56be0c7758f31477bbfa07bdc901cc5" }
