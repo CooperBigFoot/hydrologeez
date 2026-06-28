@@ -7,7 +7,13 @@ import jax
 import jax.numpy as jnp
 import optax
 
-from hydrologeez.calibration.adapter import array_to_model, bounds_array, params_to_array
+from hydrologeez.calibration.adapter import (
+    GR6J_SPEC,
+    ParamSpec,
+    array_to_model,
+    bounds_array,
+    params_to_array,
+)
 
 _EPS = 1e-6
 
@@ -32,6 +38,7 @@ def calibrate_gradient(
     n_steps: int = 200,
     learning_rate: float = 5e-2,
     optimizer: optax.GradientTransformation | None = None,
+    param_spec: ParamSpec | None = None,
 ) -> tuple[eqx.Module, jax.Array]:
     """Minimize ``loss_term(observed, sim)`` over x1..x6 via optax.
 
@@ -56,8 +63,9 @@ def calibrate_gradient(
     -------
     (calibrated_model, losses) where losses is a (n_steps,) float64 array.
     """
-    lo, hi = bounds_array()
-    x0 = params_to_array(template)
+    spec = param_spec if param_spec is not None else GR6J_SPEC
+    lo, hi = bounds_array(spec)
+    x0 = params_to_array(template, spec)
     u = _to_unconstrained(x0, lo, hi)
     opt = optimizer if optimizer is not None else optax.adam(learning_rate)
     opt_state = opt.init(u)
@@ -66,7 +74,7 @@ def calibrate_gradient(
 
     def loss_fn(u_vec: jax.Array) -> jax.Array:
         theta = _to_bounded(u_vec, lo, hi)
-        model = array_to_model(template, theta)
+        model = array_to_model(template, theta, spec)
         sim = simulate(model, forcing)
         return loss_term(obs_eval, sim[warmup:])
 
@@ -82,5 +90,5 @@ def calibrate_gradient(
         u, opt_state, loss = step(u, opt_state)
         losses.append(loss)
 
-    final_model = array_to_model(template, _to_bounded(u, lo, hi))
+    final_model = array_to_model(template, _to_bounded(u, lo, hi), spec)
     return final_model, jnp.asarray(losses, dtype=jnp.float64)
