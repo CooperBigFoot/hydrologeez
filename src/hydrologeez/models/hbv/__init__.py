@@ -37,3 +37,7 @@ __all__ = [
     "update_upper_zone",
     "upper_zone_outflows",
 ]
+
+from hydrologeez.models.hbv.model import HBVFluxes, HBVForcing, HBVModel  # noqa: E402
+
+__all__ += ["HBVForcing", "HBVFluxes", "HBVModel"]
