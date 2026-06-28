@@ -1,6 +1,6 @@
 [project]
 name = "hydrologeez"
-version = "0.1.9"
+version = "0.1.11"
 description = "hydrologeez"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -27,6 +27,11 @@ dev = [
     "bump-my-version>=1.2.7",
     "ty>=0.0.55",
 ]
+docs = [
+    "markdown-exec>=1.12.1",
+    "mkdocs-material<9.7",
+    "mkdocstrings[python]>=1.0.4",
+]
 
 # -----------------------
 # Ruff (lint + format)
@@ -34,7 +39,7 @@ dev = [
 [tool.ruff]
 line-length = 120
 target-version = "py313"
-# extend-exclude = ["notebooks/", "experiments/"]
+extend-exclude = ["site/"]
 
 [tool.ruff.lint]
 # Errors, warnings, naming, imports, modern py, bugbear, comprehensions, simplify
@@ -52,7 +57,10 @@ indent-style = "space"
 # # -----------------------
 # # ty (fast static type checker)
 # # -----------------------
-# [tool.ty]
+[tool.ty]
+
+[tool.ty.src]
+exclude = ["site/"]
 # [tool.ty.rules]
 # possibly-unresolved-reference = "warn"
 
@@ -71,7 +79,7 @@ addopts = ["--strict-markers", "--strict-config", "-ra"]
 # Bump My Version
 # -----------------------
 [tool.bumpversion]
-current_version = "0.1.9"
+current_version = "0.1.11"
 commit = false
 tag = false
 allow_dirty = true
@@ -85,6 +93,9 @@ replace = 'version = "{new_version}"'
 filename = "src/hydrologeez/__init__.py"
 search = '__version__ = "{current_version}"'
 replace = '__version__ = "{new_version}"'
+
+[tool.uv]
+default-groups = ["dev", "docs"]
 
 [tool.uv.sources]
 ctrl-freak = { git = "https://github.com/hydrosolutions/ctrl-freak.git", rev = "5a693000f56be0c7758f31477bbfa07bdc901cc5" }
