@@ -2,7 +2,7 @@
 
 **Differentiable conceptual hydrological models expressed as state-space models in JAX.**
 
-hydrologeez reimplements conceptual rainfall-runoff models (starting with GR6J) as
+hydrologeez reimplements conceptual rainfall-runoff models (GR6J and HBV-Light) as
 [Equinox](https://docs.kidger.site/equinox/) modules over a discrete-time
 state-space form, executed with `jax.lax.scan` and validated within ~1e-4 relative
 tolerance against the retired Rust `pydrology` numerical oracle.
@@ -41,4 +41,5 @@ import jax  # noqa: E402
 ## Where to go next
 
 - [GR6J model](gr6j.md) - the equations, usage, a runnable end-to-end example, and the API reference.
+- [HBV model](hbv.md) - the 14-parameter HBV-Light single-zone model: snow/soil/response math, the MAXBAS masked routing kernel, a runnable oracle-validated example, and the API reference.
 - [Contributor contract](contracts.md) - the two-method model contract, the static-shape/masked-kernel policy, the float64 enablement contract, and the oracle-parity bar.
