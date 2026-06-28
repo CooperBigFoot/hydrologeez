@@ -87,3 +87,69 @@ builds the Rust UH table, and emits the crafted step-branch artifact.
 - B=0.9 (UH1 split), C=0.4 (exp-store fraction), D=2.5, NH=20 (UH1 len; UH2=40),
   PERC_CONSTANT=(9/4)^4=25.62890625, MAX_TANH_ARG=13.0, MAX_EXP_ARG=33.0,
   EXP_BRANCH_THRESHOLD=7.0, STATE_SIZE=63.
+
+# HBV-Light golden oracle fixtures
+
+Self-describing single-zone (lumped) HBV-Light fixtures generated from the retired
+Rust `pydrology` oracle (`/Users/nicolaslazaro/Desktop/work/pydrology`, prebuilt
+`_core`). Each run fixture stores its own 14 generating params, so downstream tests
+are driven by the fixture and never re-type constants. Parity target across the JAX
+rewrite is ~1e-4 relative (rtol=1e-4 + small atol), not bit-exact (see docs/DESIGN.md).
+
+## Regeneration (deterministic, no randomness)
+
+Run from the pydrology environment, NOT the hydrologeez venv, NOT maturin:
+
+    uv run --project /Users/nicolaslazaro/Desktop/work/pydrology \
+        python <hydrologeez-worktree>/scripts/generate_hbv_fixtures.py
+
+The script reloads `gauge_id=camels_06224000/data.parquet` and builds
+`ForcingData(time=df['date'], precip=df['mswep_precipitation'],
+pet=df['potential_evaporation_sum_FAO_PENMAN_MONTEITH'],
+temp=df['temperature_2m_mean'])`. Temperature is REQUIRED by HBV-Light and the
+ForcingData field name is `temp` (not `temperature`). CONFIRMED temperature column:
+`temperature_2m_mean` [C], range -31.703 to 18.316 (the cold tail exercises
+snow/melt/refreeze across the full series, so no separate snow-branch fixture is
+needed). It runs both param sets, dumps `result.fluxes.to_dict()` (20 keys), and
+builds the MAXBAS kernel table via `hbv_light.hbv_triangular_weights(maxbas)`.
+
+## Artifacts
+
+### hbv_camels_06224000.npz (canonical, integer maxbas)
+- Params (stored, canonical order tt..maxbas): tt=0.0, cfmax=3.5, sfcf=1.0,
+  cwh=0.1, cfr=0.05, fc=250.0, lp=0.7, beta=2.0, k0=0.3, k1=0.1, k2=0.05,
+  perc=2.0, uzl=20.0, maxbas=3.0. warmup_length=365, basin_id=camels_06224000.
+  Default initial state (SM=0.5*fc=125.0; snow/SUZ/SLZ/routing buffer zeroed).
+- The 20 flux arrays from `result.fluxes.to_dict()` (length 12333, no warm-up
+  trim), in order: precip, temp, pet, precip_rain, precip_snow, snow_pack,
+  snow_melt, liquid_water_in_snow, snow_input, soil_moisture, recharge,
+  actual_et, upper_zone, lower_zone, q0, q1, q2, percolation, qgw, streamflow.
+
+### hbv_camels_06224000_maxbas25.npz (fractional maxbas=2.5)
+- Params (stored): tt=0.5, cfmax=5.0, sfcf=1.1, cwh=0.1, cfr=0.05, fc=300.0,
+  lp=0.7, beta=2.5, k0=0.4, k1=0.15, k2=0.04, perc=2.5, uzl=25.0, maxbas=2.5.
+  Same 20-flux + metadata schema (stores its own 14 params; default SM=0.5*fc=150.0).
+- maxbas=2.5 -> ceil=3 renormalized triangular UH weights, exercising the
+  fractional-maxbas routing path. The cold-tail temps drive nonzero
+  precip_snow/snow_melt on many steps (snow routine non-vacuous).
+
+### hbv_triangular_weights.npz (true Rust MAXBAS kernel table)
+- Built from the genuine Rust binding `hbv_light.hbv_triangular_weights(maxbas)`,
+  NOT a Python mirror.
+- maxbas_grid = [1.0, 2.0, 2.5, 3.0, 3.5, 5.0, 7.0] (integer + fractional,
+  spanning the [1, 7] bounds).
+- weights shape (7, 7): row i is the kernel for maxbas_grid[i], zero-padded
+  beyond ceil(maxbas), each row summing to ~1.0.
+
+## Conventions / known oracle facts (mirror-and-note)
+- Triangular weights are NORMALIZED BY SUM: the raw per-bin triangle integrates to
+  0.5, so the oracle divides by the sum to reach 1.0 (load-bearing; do not skip).
+- Number of active weights n = max(ceil(maxbas), 1): maxbas 1->1, 2->2, 2.5->3,
+  7->7. Integer maxbas yields symmetric weights.
+- The routing convolution is read-before-shift, giving an inherent +1-step lag:
+  streamflow[0] == 0 from the zero-init buffer. Even maxbas=1 is a pure 1-step delay.
+- warmup_length=365 is METADATA ONLY: the pydrology core does no warm-up trimming
+  (full 12333-row series written); the parity consumer discards the first 365 days.
+- The HBV-Light oracle hard-validates ONLY maxbas in [1.0, 7.0]; the other 13
+  param bounds are advisory (calibration only). Both committed param sets are
+  strictly in-bounds.
