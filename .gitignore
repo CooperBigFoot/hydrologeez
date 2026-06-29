@@ -16,3 +16,6 @@ Thumbs.db
 # Scratchpad (keep folder, ignore contents)
 scratchpad/*
 !scratchpad/.gitkeep
+
+# Orchestrator planning state (briefs, tasks.json) — not shipped
+planning/
