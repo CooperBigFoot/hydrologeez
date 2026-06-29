@@ -32,7 +32,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Hydrology",
 ]
 dependencies = [
-    "ctrl-freak>=0.2.0",
+    "ctrl-freak>=0.2.1",
     "equinox>=0.13.8",
     "jax>=0.10.2",
     "optax>=0.2.8",
@@ -130,6 +130,3 @@ replace = '__version__ = "{new_version}"'
 
 [tool.uv]
 default-groups = ["dev", "docs"]
-
-[tool.uv.sources]
-ctrl-freak = { git = "https://github.com/hydrosolutions/ctrl-freak.git", rev = "5a693000f56be0c7758f31477bbfa07bdc901cc5" }
