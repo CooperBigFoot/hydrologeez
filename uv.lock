@@ -316,11 +316,15 @@ toml = [
 [[package]]
 name = "ctrl-freak"
 version = "0.2.1"
-source = { git = "https://github.com/hydrosolutions/ctrl-freak.git?rev=5a693000f56be0c7758f31477bbfa07bdc901cc5#5a693000f56be0c7758f31477bbfa07bdc901cc5" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "joblib" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ad/6f/fceacccc7b7141c0f072096857417861ac7295d87eab998f0b777ec098d6/ctrl_freak-0.2.1.tar.gz", hash = "sha256:e3a2cd6c452c386541090b7146aa0936027922ac9bda55edde7e0b76d54acf72", size = 24680, upload-time = "2026-06-29T19:17:55.245Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1c/d9/b1d3bdb264f5478ae0239c82a932c3272482817c1ce0c7492711207e6330/ctrl_freak-0.2.1-py3-none-any.whl", hash = "sha256:7c659abd2b0705a2af90613d822adefa6dbe267164500111128061e2bb32378d", size = 38302, upload-time = "2026-06-29T19:17:54.228Z" },
 ]
 
 [[package]]
@@ -428,7 +432,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ctrl-freak", git = "https://github.com/hydrosolutions/ctrl-freak.git?rev=5a693000f56be0c7758f31477bbfa07bdc901cc5" },
+    { name = "ctrl-freak", specifier = ">=0.2.1" },
     { name = "equinox", specifier = ">=0.13.8" },
     { name = "jax", specifier = ">=0.10.2" },
     { name = "jax", extras = ["cuda12"], marker = "extra == 'cuda'" },
