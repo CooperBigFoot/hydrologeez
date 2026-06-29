@@ -1,7 +1,12 @@
 site_name: hydrologeez
 site_description: Differentiable conceptual hydrological models in JAX.
+site_url: https://cooperbigfoot.github.io/hydrologeez/
 repo_url: https://github.com/CooperBigFoot/hydrologeez
 docs_dir: docs
+
+exclude_docs: |
+  DESIGN.md
+  codex-non-interactive.md
 
 theme:
   name: material
