@@ -12,14 +12,9 @@ import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
 import numpy as np  # noqa: E402
 import optax  # noqa: E402
-from ctrl_freak.algorithms.ga import ga  # noqa: E402
 
-from hydrologeez.calibration import (  # noqa: E402
-    PARAM_NAMES,
-    bounds_array,
-    make_batch_evaluator,
-    make_objective,
-)
+from hydrologeez import calibrate_evolutionary  # noqa: E402
+from hydrologeez.calibration import GR6J_SPEC  # noqa: E402
 from hydrologeez.metrics import kge, nse, rmse  # noqa: E402
 from hydrologeez.models.gr6j import GR6J, GR6JForcing  # noqa: E402
 
@@ -41,10 +36,6 @@ def _model_from_params(params: np.ndarray) -> GR6J:
         x5=jnp.asarray(params[4], dtype=jnp.float64),
         x6=jnp.asarray(params[5], dtype=jnp.float64),
     )
-
-
-def _simulate(model: eqx.Module, forcing: object) -> jax.Array:
-    return cast(GR6J, model).run(cast(GR6JForcing, forcing))
 
 
 def forward_and_parity() -> tuple[GR6J, GR6JForcing, int]:
@@ -97,43 +88,20 @@ def gradient_demo(true_model: GR6J, forcing: GR6JForcing, warmup: int) -> None:
 
 
 def evolutionary_demo(true_model: GR6J, forcing: GR6JForcing, warmup: int) -> None:
-    observed = jax.lax.stop_gradient(true_model.run(forcing))
-    evaluate = make_objective(
+    observed = true_model.run(forcing)
+    _best_model, result = calibrate_evolutionary(
         true_model,
         forcing,
         observed,
-        simulate=_simulate,
         objective_term=lambda o, s: 1.0 - nse(o, s),
+        param_spec=GR6J_SPEC,
+        pop_size=16,
+        n_generations=20,
+        seed=0,
         warmup=warmup,
     )
-    evaluate_batch = make_batch_evaluator(evaluate)
-    lo, hi = (np.asarray(x) for x in bounds_array())
-
-    def init(rng: np.random.Generator) -> np.ndarray:
-        return rng.uniform(lo, hi)
-
-    def crossover(p1: np.ndarray, p2: np.ndarray) -> np.ndarray:
-        return 0.5 * (p1 + p2)
-
-    def mutate(x: np.ndarray) -> np.ndarray:
-        return np.clip(x, lo, hi)
-
-    def trap_evaluate(_x: np.ndarray) -> float:
-        raise AssertionError("per-individual evaluate entered; batched path not used")
-
-    result = ga(
-        init=init,
-        evaluate=trap_evaluate,
-        crossover=crossover,
-        mutate=mutate,
-        pop_size=8,
-        n_generations=3,
-        seed=0,
-        evaluate_batch=evaluate_batch,
-    )
-    best_x, best_fit = result.best
-    best_by_name = ", ".join(f"{name}={value:.3g}" for name, value in zip(PARAM_NAMES, best_x, strict=True))
-    print(f"[ctrl-freak] best objective {best_fit:.6f}; {best_by_name}")
+    _best_x, best_fit = result.best
+    print(f"[ctrl-freak GA] best objective {best_fit:.6f}")
 
 
 def main() -> None:
