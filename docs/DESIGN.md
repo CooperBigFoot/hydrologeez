@@ -1,66 +1,81 @@
 # hydrologeez — Design Spec
 
-> Output of the design/grill session. This is the durable architectural reference
-> for the project. The orchestrator and all planning agents treat this as the
-> source of truth for *what* and *why*; the *how* is planned per-milestone.
+> Living architectural reference for the project. The orchestrator and all
+> planning agents treat this as the source of truth for *what* and *why*; the
+> *how* is planned per-milestone. This document is no longer a porting brief —
+> the initial port is complete and that framing is retired.
 
 ## Identity
 
-**Conceptual hydrological models expressed as differentiable state-space models in JAX.**
+**Differentiable conceptual hydrological models expressed as state-space models
+in JAX.**
 
 - PyPI / import name: `hydrologeez` (`import hydrologeez`).
-- The existing Rust project `pydrology` (`/Users/nicolaslazaro/Desktop/work/pydrology`)
-  is **retired** as a runtime, but kept as the **numerical oracle** for validation.
+- Substrate: `jax` + `equinox`. A model *is* an `eqx.Module` whose fields are its
+  parameters.
+- Correctness standard: the **documented per-model equations are the oracle**
+  (see [gr6j.md](gr6j.md), [hbv.md](hbv.md)). Committed numeric fixtures are
+  regression guards, not an external gold standard.
 
-## Motivation (settled)
+## Motivation
 
-1. **Contributor accessibility** — target contributors are experienced Python
-   developers (hydrology researchers), not Rust developers. Rust + PyO3 + trait
-   generics + a proc macro is a wall for them.
-2. **Autodiff** — keep the door open to hybrid DL + traditional hydrology
-   (differentiable models, gradient calibration, sensitivity analysis). Not the
-   primary goal, but a first-class architectural constraint.
+Stated positively (not as a migration away from anything):
 
-Adoption and contributor reach are valued **over raw single-run latency**. Rust
-is retired despite being faster per single run, because JAX recovers performance
-via `jit`+`lax.scan` (near-native time loop) and *wins* on batched calibration
-via `vmap` (whole population / many catchments in one compiled, GPU-able call).
-The one accepted permanent loss is single-step debuggability (opaque XLA traces
-vs. a Rust stack trace).
+1. **A clean, tested, differentiable SSM library** for conceptual rainfall-runoff
+   models, accessible to Python hydrology researchers (no Rust / PyO3 / trait
+   generics wall for contributors).
+2. **Batched calibration is the headline capability.** Whole populations / many
+   catchments are evaluated in **one `vmap`-compiled call**, `jit`-compiled and
+   GPU-able — the thing the substrate makes cheap that a per-run implementation
+   does not.
+3. **Differentiability is a first-class architectural property**, kept as an open
+   door: `jax.grad(loss)(model)` differentiates straight through the time loop.
+   Hybrid DL and gradient calibration are **architecturally supported but not yet
+   exercised** — no hybrid model has been built, and the docs do not advertise
+   one.
+
+The one accepted permanent cost of the substrate is single-step debuggability
+(opaque XLA traces vs. an eager stack trace).
 
 ## Core abstraction — the State-Space Model (SSM)
 
-Discrete-time state-space form, taken literally:
+A conceptual rainfall-runoff model is a **nonlinear discrete-time state-space
+model** — a dynamical system observed through a measurement map.
 
 ```
-transition:   (state, forcing) -> (state, fluxes)   # fused; computes ALL internal fluxes
-observation:  (state, fluxes)  -> observable        # pluggable; default = streamflow
-run:          lax.scan(transition) over forcing     # the fold
+state (stores):     x_t ∈ R^n
+forcing (inputs):   u_t ∈ R^m      (precip, PET, temperature)
+parameters:         θ   ∈ R^p
+
+transition:   (x_{t+1}, z_t) = f_θ(x_t, u_t)     z_t ∈ R^k internal fluxes
+observation:  y_t = h(x_t, z_t)                  default h ⇒ streamflow
+trajectory:   {y_t} = scan(f_θ) over u_{0:T-1}, from x_0
 ```
 
-- `state` (x) = stores (production, routing, exponential, UH/MAXBAS buffers, ...)
-- `forcing` (u) = precip, PET, temperature
-- `params` (θ) = x1..x6 (GR6J), HBV's 14 params, ...
-- `fluxes` (y, internal) = the full internal flux set per step
-- `observable` = what we compare to data (default streamflow; pluggable for
-  snow cover / ET later)
+So `run` is a deterministic map `(θ, x_0, u_{0:T-1}) ↦ {y_t}`. This is identical
+in shape to `lax.scan`'s `(carry, x) -> (carry, y)`, so the SSM frame and the JAX
+execution model are the same thing — no impedance mismatch.
 
-This is identical in shape to `lax.scan`'s `(carry, x) -> (carry, y)`, so the
-SSM frame and the JAX execution model are the same thing — no impedance mismatch.
+Every project verb is then a **named operation on that map**:
 
-Everything the project wants is a named operation on the SSM:
+- **calibration** = `θ* = argmin_θ L({y_t(θ)}, y_obs)` — system identification.
+- **sensitivity / gradient calibration** = `∂y_t/∂θ` via reverse-mode autodiff
+  through the scan. *(Supported; not yet exercised.)*
+- **hybrid DL** = replace part of `f_θ` or `h` with a network (`eqx.Module`
+  field). *(Supported; not yet exercised.)*
+- **data assimilation** = add process/observation noise
+  `x_{t+1}=f_θ(x_t,u_t)+w_t`, `y_t=h(x_t,z_t)+v_t` and filter — enabled by the
+  explicit observation operator `h`. *(Future.)*
 
-- calibration = parameter estimation of θ
-- autodiff = ∂(observable)/∂θ (sensitivities, gradient calibration)
-- hybrid DL = replace part of `transition` or `observation` with an NN
-  (`eqx.Module` field) — fits naturally
-- data assimilation (EnKF / particle filter) = enabled by the distinct
-  observation operator
+Per-step symbols: `x` = stores (production/routing/exponential, UH / MAXBAS
+buffers, ...); `u` = precip, PET, temperature; `θ` = x1..x6 (GR6J), the 14 HBV
+params; `z` = the full internal flux set per step; `y` = the observable (default
+streamflow; pluggable for snow cover / ET later).
 
 ## Representation: Equinox
 
-- **All PyTrees are Equinox modules.** A model **is** an `eqx.Module` whose
-  fields are its params → `jax.grad(loss)(model)` differentiates through params.
+- **All PyTrees are Equinox modules.** A model **is** an `eqx.Module` whose fields
+  are its params → `jax.grad(loss)(model)` differentiates through params.
 - An abstract base `eqx.Module` provides `run` (`lax.scan`) and a batched `run`
   (`vmap`) for free.
 - A contributor implements only:
@@ -86,42 +101,108 @@ Under `jit`/`vmap`, array shapes must be static. Several params control sizes, s
 ## Calibration — dual stack
 
 - **Derivative-free (global + multi-objective):** `ctrl-freak` (GA + NSGA-II
-  Pareto). Population is evaluated via `vmap` in one batched, jit-compiled call.
-  → requires adding a **batched-evaluate hook** to `ctrl-freak` upstream
-  (owned: hydrosolutions/ctrl-freak). Dependency comes from **PyPI** now.
+  Pareto). Population is evaluated via `vmap` in one batched, jit-compiled call
+  through `ctrl-freak`'s `evaluate_batch` hook. Dependency comes from **PyPI**.
+  **Shipped:** public `calibrate_evolutionary` (GA) and `calibrate_nsga2` (Pareto)
+  wire `ctrl-freak`'s bounded `sbx_crossover` / `polynomial_mutation` operators
+  over the batched evaluator.
 - **Gradient-based (local + autodiff showcase):** `optax` / `jax.grad` through
-  `transition` → `run` → loss, for fast single-objective calibration.
-- **Metrics** (NSE, KGE, logNSE, PBIAS, RMSE, MAE) are **rewritten JAX-native**
-  so they are differentiable. No Rust metrics.
+  `transition` → `run` → loss, for fast single-objective calibration. **Shipped**
+  as `calibrate_gradient`.
+- **Metrics** (NSE, KGE, logNSE, PBIAS, RMSE, MAE) are **JAX-native** so they are
+  differentiable. **Shipped** in `hydrologeez.metrics`.
 - params PyTree ↔ flat array boundary via `ravel_pytree` / `eqx.partition`.
+  **Shipped** as the `ParamSpec` adapter (`params_to_array` / `array_to_model`,
+  plus generic `model_to_flat` / `flat_to_model`).
 
-## Precision & validation
+## Precision (float64 required, numerically justified)
 
-- **float64 is required** (long store accumulation + metric stability). Enforced
-  by a **loud import-time check** of `jax.config` — **no silent global x64 flip**
-  (respects other libraries in the user's process). Fail fast with the one-line
-  fix if x64 is off.
-- The Rust `pydrology` is a **reference oracle, not gospel**. Parity target:
-  **within ~1e-4 relative**, not bit-exact. Where Rust is wrong, the JAX rewrite
-  corrects it and updates the fixture **with a note**.
-- Validation harness: generate `(forcing → fluxes/streamflow)` golden fixtures
-  from the Rust implementation; every JAX model must reproduce them within
-  tolerance before acceptance.
+**float64 is required** — justified by numerics, not by matching any reference
+implementation.
 
-## Scope & sequence (current milestone)
+- A conceptual model folds storage over 10³–10⁴ daily steps. float32 (~7
+  significant digits) accumulates drift in long store balances and loses
+  precision in calibration-metric sums (catastrophic cancellation in NSE/KGE
+  differences), yielding **subtly wrong calibrated parameters** that are
+  near-impossible to debug post hoc.
+- Enforced by a **loud import-time check** of `jax.config` that **raises** if
+  `jax_enable_x64` is off. **No silent global x64 flip** (respects other
+  libraries in the user's process). Fail fast with the one-line fix.
 
-**In scope: GR6J and HBV-Light only.** Both standalone, daily, both exercise the
-masked-kernel pattern (GR6J UH, HBV MAXBAS). No coupling required.
+## Validation — the equations are the oracle
 
-1. **GR6J** — proves the pipeline **and** the masked-kernel UH design. Build in
-   thin layers: get `transition` + `scan` + oracle parity green **before**
-   wiring calibration, autodiff, CI, and publishing on top.
-2. **HBV-Light** — proves the contract generalizes (2nd kernel via `MAXBAS`) and
-   stresses calibration (14-D).
+- The **documented per-model equations are the specification.** Correctness means
+  fidelity to them.
+- **Committed numeric fixtures are regression guards**, not an external gold
+  standard. They were seeded during the initial port and are maintained against
+  the documented equations. Regression tolerance: **within ~1e-4 relative**
+  (`numpy.testing.assert_allclose(rtol=1e-4, atol=1e-6)`), not bit-exact.
+- **Version-fidelity to the published GR6J (airGR) and HBV-Light formulations is
+  NOT yet verified.** Several documented behaviors are **known properties of the
+  current implementation pending a version audit** (e.g. HBV above-FC overflow
+  discard; explicit-split over-draw that can create mass; GR6J magic constants /
+  clamps). They are documented as-is, without claiming they match — or diverge
+  from — any published version. A dedicated audit step will reconcile these and
+  update code where needed.
 
-**Out of scope (for now):** GR2M, CemaNeige, GR6J–CemaNeige, glacier coupling.
-Keep the base contract **open to SSM composition** (output-flux-as-input-forcing)
-so coupling is not foreclosed later.
+## I/O — HDX is the canonical input interface
+
+hydrologeez ingests and emits **HDX** datasets (`../hdx` — a prescriptive,
+cloud-optimized per-basin hydrology data interface). A lumped conceptual model is
+inherently **all-scalar I/O**, so it touches only HDX's scalar quadrants:
+
+| hydrologeez | HDX quadrant | encoding |
+|---|---|---|
+| forcing: `precip[T]`, `pet[T]`, `temp[T]` | `scalar · dynamic` `[T]` | `basin=<id>/scalar_dynamic.parquet` cols |
+| observed streamflow `[T]` | `scalar · dynamic` `[T]` | same parquet |
+| static params / drainage area | `scalar · static` `[]` | root `scalar_static.parquet` |
+| **model output streamflow** | `scalar · dynamic` `[T]` | a prediction dataset is just an HDX dataset |
+| `batch_run` / `vmap` batch axis | HDX **basin-first partitioning** | many `basin=<id>/` dirs |
+
+- **Canonical, not coupled.** HDX is the canonical, documented, default way in —
+  a loader (`from_hdx`) reads the scalar parquet and yields the array-native
+  `Forcing` the numerical core consumes. `model.run(forcing)` still takes plain
+  arrays; the `jit`/`vmap` kernel **never depends on a file format**. Only parquet
+  is needed for the scalar path (polars/pyarrow); no zarr/COG.
+- **Vocabulary on top of HDX.** HDX is role-agnostic by design (field names are
+  opaque; it carries no forcing/target roles). hydrologeez owns the **semantic
+  layer**: a documented vocabulary mapping field names → model roles (defaults
+  `precip`/`pet`/`temp` → forcing, `streamflow` → target), plus an explicit
+  field-role map override for foreign datasets. Factor into a shared HDX profile
+  only when a second consumer needs it.
+- **Predictions are HDX.** Model output is written back as a conformant
+  `scalar·dynamic` prediction dataset.
+- **Batching.** HDX basin-first partitioning ↔ the `vmap` batch axis; many basins
+  → `batch_run`. Ragged per-basin time records are reconciled by **pad+mask** (or
+  equal-length grouping), since `vmap` requires static shapes.
+- `hdx-core` reads **metadata only** (`validate`/`describe` over footers/schemas);
+  hydrologeez reads the column values itself and may call `validate` first to fail
+  fast on a non-conformant dataset.
+
+### Future: gridded → scalar derivation edge (out of scope now)
+
+When a model needs a **DEM** (elevation bands, hypsometric curve) the DEM ships
+via HDX as `gridded·static` (COG). It is read **once at preprocessing** and
+reduced to **structural integers** (band count → `eqx.field(static=True)`) and
+`scalar·static` per-band attributes; the differentiable model **never
+differentiates through a raster**. This adds a raster-reader dependency and lands
+only when multi-zone HBV / CemaNeige do. HDX is simply the transport for the DEM.
+
+## Scope & sequence
+
+**Done (step one — the port):** GR6J and HBV-Light, both standalone, daily, both
+exercising the masked-kernel pattern (GR6J UH, HBV MAXBAS). Both have transition +
+scan + committed regression fixtures.
+
+**Out of scope (for now):** GR2M, CemaNeige, GR6J–CemaNeige, glacier coupling,
+multi-zone (elevation-band) HBV. Keep the base contract **open to SSM composition**
+(output-flux-as-input-forcing) so coupling is not foreclosed later.
+
+**Next milestones (candidates):** HDX I/O layer (canonical scalar ingestion +
+prediction writer + vocabulary) and the version-fidelity audit. Calibration
+wiring — the `ctrl-freak` batched hook, the `optax` gradient path, JAX-native
+metrics, the params↔array adapter, and the public
+`calibrate_evolutionary`/`calibrate_nsga2` API — is now **shipped**.
 
 ## Packaging & conventions
 
@@ -137,18 +218,21 @@ Repo already scaffolded; follow its conventions:
   `np.asarray`).
 - Docs: mkdocs-material. `docs/contracts.md` defines the contributor contract.
 - CI: GitHub Actions + PyPI Trusted Publishing (OIDC).
-- Core deps: `jax`, `equinox`, `optax`, `ctrl-freak` (PyPI). `jax[cuda]` as an
-  optional extra.
+- Core deps: `jax`, `equinox`, `optax`, `ctrl-freak` (PyPI). HDX scalar ingestion
+  adds a parquet reader (polars/pyarrow). `jax[cuda]` as an optional extra.
 
 ## Quality bar
 
-JOSS-grade as the floor (oracle parity + tests + docs + CI + working example +
+JOSS-grade as the floor (equation-fidelity + tests + docs + CI + working example +
 contribution guide). Paper venue deliberately deferred — quality bar holds
 regardless.
 
 ## Open items (resolve at build-time, non-blocking)
 
-- Exact params↔flat-array adapter for the ctrl-freak boundary.
 - Gradient-promise level: write diff-clean (`jnp.where`, soft clamps), add
   gradient-finiteness smoke tests, advertise gradient calibration only where
-  validated against the oracle.
+  validated.
+- HDX vocabulary: hydrologeez-owned convention now; shared profile later if a
+  second consumer needs it.
+- Version-fidelity audit: reconcile the current implementation's known behaviors
+  against published GR6J/HBV-Light and update code where needed.
