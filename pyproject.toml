@@ -1,6 +1,6 @@
 [project]
 name = "hydrologeez"
-version = "0.1.0"
+version = "0.1.1"
 description = "Differentiable conceptual hydrological models (GR6J, HBV) in JAX with gradient and evolutionary calibration"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -113,7 +113,7 @@ addopts = ["--strict-markers", "--strict-config", "-ra"]
 # Bump My Version
 # -----------------------
 [tool.bumpversion]
-current_version = "0.1.0"
+current_version = "0.1.1"
 commit = false
 tag = false
 allow_dirty = true

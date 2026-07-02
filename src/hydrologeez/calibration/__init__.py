@@ -11,6 +11,11 @@ from hydrologeez.calibration.adapter import (
     model_to_flat,
     params_to_array,
 )
+from hydrologeez.calibration.api import (
+    calibrate_evolutionary,
+    calibrate_nsga2,
+    make_bounded_operators,
+)
 from hydrologeez.calibration.evolutionary import (
     make_batch_evaluator,
     make_objective,
@@ -30,4 +35,7 @@ __all__ = [
     "make_batch_evaluator",
     "make_objective",
     "calibrate_gradient",
+    "make_bounded_operators",
+    "calibrate_evolutionary",
+    "calibrate_nsga2",
 ]
