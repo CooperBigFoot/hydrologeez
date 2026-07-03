@@ -235,8 +235,6 @@ def verify_fixtures(out: Path) -> bool:
 
 RUN_FIXTURE_NAMES = frozenset({"hbv_camels_06224000.npz", "hbv_camels_06224000_maxbas25.npz", OVERFLOW_FIXTURE})
 
-_RUN_SAVE_KEYS = ("params", "param_names", "warmup_length", "basin_id", *FLUX_KEYS)
-
 
 def _savez_run(path: Path, rebuilt: dict[str, np.ndarray]) -> None:
     np.savez(

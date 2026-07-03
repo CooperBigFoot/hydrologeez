@@ -137,13 +137,7 @@ implementation.
   standard. They were seeded during the initial port and are maintained against
   the documented equations. Regression tolerance: **within ~1e-4 relative**
   (`numpy.testing.assert_allclose(rtol=1e-4, atol=1e-6)`), not bit-exact.
-- **Version-fidelity to the published GR6J (airGR) and HBV-Light formulations is
-  NOT yet verified.** Several documented behaviors are **known properties of the
-  current implementation pending a version audit** (e.g. HBV above-FC overflow
-  discard; explicit-split over-draw that can create mass; GR6J magic constants /
-  clamps). They are documented as-is, without claiming they match — or diverge
-  from — any published version. A dedicated audit step will reconcile these and
-  update code where needed.
+- **Version-fidelity to the published GR6J (airGR) and HBV-Light formulations has been audited and reconciled.** Three confirmed divergences were corrected: (1) a shared read-before-shift routing lag in both the GR6J unit-hydrograph and HBV MAXBAS convolutions is now read-after-shift (same-day ordinate-1 term; matches airGR `MOD_GR6J` and Seibert & Vis 2012), via one shared `convolve_delay_line` helper; (2) GR6J `actual_exchange_total` now includes the exponential-store exchange leg F (airGR `MISC(15) = AEXCH1 + AEXCH2 + EXCH`); (3) HBV above-field-capacity soil moisture is now routed to upper-zone recharge instead of discarded (mass-conserving; Seibert & Vis 2012). Two behaviors are **retained by decision and documented**: the explicit-split (forward-Euler) store over-draw, which standard HBV implementations share (correcting it would diverge from published HBV), and the internal parameter-bound convention. The GR6J "magic constants / clamps" were verified **verbatim against airGR** (no change). The corrected Python equations are the oracle for both models; the committed fixtures are corrected-Python regression snapshots. See `contracts.md`, `gr6j.md`, and `hbv.md`.
 
 ## I/O — HDX is the canonical input interface
 
@@ -198,8 +192,8 @@ scan + committed regression fixtures.
 multi-zone (elevation-band) HBV. Keep the base contract **open to SSM composition**
 (output-flux-as-input-forcing) so coupling is not foreclosed later.
 
-**Next milestones (candidates):** HDX I/O layer (canonical scalar ingestion +
-prediction writer + vocabulary) and the version-fidelity audit. Calibration
+**Next milestones (candidates):** the HDX I/O layer (canonical scalar ingestion +
+prediction writer + vocabulary). The version-fidelity audit (GR6J vs airGR, HBV vs HBV-Light) is now **complete** — see the Validation section. Calibration
 wiring — the `ctrl-freak` batched hook, the `optax` gradient path, JAX-native
 metrics, the params↔array adapter, and the public
 `calibrate_evolutionary`/`calibrate_nsga2` API — is now **shipped**.
@@ -234,5 +228,3 @@ regardless.
   validated.
 - HDX vocabulary: hydrologeez-owned convention now; shared profile later if a
   second consumer needs it.
-- Version-fidelity audit: reconcile the current implementation's known behaviors
-  against published GR6J/HBV-Light and update code where needed.
