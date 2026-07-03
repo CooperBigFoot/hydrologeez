@@ -1,6 +1,6 @@
 [project]
 name = "hydrologeez"
-version = "0.1.5"
+version = "0.1.7"
 description = "Differentiable conceptual hydrological models (GR6J, HBV) in JAX with gradient and evolutionary calibration"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -47,6 +47,9 @@ Issues = "https://github.com/CooperBigFoot/hydrologeez/issues"
 
 [project.optional-dependencies]
 cuda = ["jax[cuda12]"]
+hdx = [
+    "polars>=1.42.1",
+]
 
 
 [build-system]
@@ -60,6 +63,7 @@ dev = [
     "ruff>=0.12", # linter + formatter
     "bump-my-version>=1.2.7",
     "ty>=0.0.55",
+    "polars>=1.42.1",
 ]
 docs = [
     "markdown-exec>=1.12.1",
@@ -113,7 +117,7 @@ addopts = ["--strict-markers", "--strict-config", "-ra"]
 # Bump My Version
 # -----------------------
 [tool.bumpversion]
-current_version = "0.1.5"
+current_version = "0.1.7"
 commit = false
 tag = false
 allow_dirty = true
