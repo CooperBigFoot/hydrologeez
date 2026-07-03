@@ -78,7 +78,11 @@ def _model_from_params(params):
 
 @pytest.mark.parametrize(
     "fixture_name",
-    ["hbv_camels_06224000.npz", "hbv_camels_06224000_maxbas25.npz"],
+    [
+        "hbv_camels_06224000.npz",
+        "hbv_camels_06224000_maxbas25.npz",
+        "hbv_camels_06224000_overflow.npz",
+    ],
 )
 def test_full_series_parity(fixture_name):
     data = np.load(FIXTURES / fixture_name, allow_pickle=False)

@@ -50,6 +50,7 @@ PARAM_NAMES = (
 
 CANONICAL_PARAMS = [0.0, 3.5, 1.0, 0.1, 0.05, 250.0, 0.7, 2.0, 0.3, 0.1, 0.05, 2.0, 20.0, 3.0]
 MAXBAS25_PARAMS = [0.5, 5.0, 1.1, 0.1, 0.05, 300.0, 0.7, 2.5, 0.4, 0.15, 0.04, 2.5, 25.0, 2.5]
+OVERFLOW_PARAMS = [0.0, 3.5, 1.0, 0.1, 0.05, 50.0, 0.7, 6.0, 0.3, 0.1, 0.05, 2.0, 20.0, 3.0]
 
 MAXBAS_GRID = (1.0, 2.0, 2.5, 3.0, 3.5, 5.0, 7.0)
 
@@ -78,8 +79,11 @@ def _check_run_fixture(name: str, expected_params: list[float]) -> dict[str, np.
 def test_canonical_fixture():
     d = _check_run_fixture("hbv_camels_06224000.npz", CANONICAL_PARAMS)
     assert d["params"][13] == 3.0  # integer maxbas
-    # routing lag: zero-init buffer makes the first routed output 0
-    assert d["streamflow"][0] == 0.0
+    # same-day routing (read-after-shift): streamflow turns on the SAME step qgw
+    # first does; the buggy read-before-shift delayed it one step.
+    first_qgw = int(np.argmax(d["qgw"] > 0.0))
+    assert first_qgw > 0
+    assert int(np.argmax(d["streamflow"] > 0.0)) == first_qgw  # was first_qgw + 1
 
 
 def test_maxbas25_fixture_params_and_snow():
@@ -88,6 +92,20 @@ def test_maxbas25_fixture_params_and_snow():
     # cold-tail temps drive the snow routine non-vacuously
     assert np.count_nonzero(d["precip_snow"]) > 1
     assert np.count_nonzero(d["snow_melt"]) > 1
+
+
+def test_overflow_fixture_fires_and_conserves_mass():
+    d = _check_run_fixture("hbv_camels_06224000_overflow.npz", list(OVERFLOW_PARAMS))
+    fc = float(d["params"][5])
+    assert d["params"][5] == 50.0 and d["params"][7] == 6.0  # low fc / steep beta
+    sm = d["soil_moisture"]
+    # overflow FIRES: soil moisture is driven to field capacity on >= 1 step
+    assert int(np.sum(sm >= fc - 1e-9)) >= 1
+    # per-step soil mass balance with overflow accounted, NO discarded water:
+    # snow_input == dSM + recharge_total + actual_et   (recharge column == base + overflow)
+    sm_prev = np.concatenate([[0.5 * fc], sm[:-1]])
+    resid = d["snow_input"] - ((sm - sm_prev) + d["recharge"] + d["actual_et"])
+    assert np.max(np.abs(resid)) < 1e-9
 
 
 def test_triangular_weights_table():

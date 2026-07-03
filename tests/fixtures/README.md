@@ -117,9 +117,12 @@ rtol=1e-4/atol=1e-6, exits nonzero on any mismatch, and never overwrites a
 `.npz`. Forcing is read from each run fixture's own stored `precip`, `pet`, and
 `temp` columns; the retired pydrology data parquet is no longer used. The oracle
 is now the hydrologeez model: `HBVModel.run` for series and
-`processes.compute_triangular_weights` for the MAXBAS kernel table. The `.npz`
-files themselves are unchanged by S0; this step only repoints and proves the
-generator.
+`processes.compute_triangular_weights` for the MAXBAS kernel table. The HBV run
+`.npz` (canonical, maxbas25, and the new overflow stress fixture) are regenerated
+from the corrected model in the version-audit step — routing reads the delay-line
+head after the shift (same-day term; no +1-step lag) and above-FC soil moisture is
+routed to recharge (mass-conserving) instead of being discarded;
+`hbv_triangular_weights.npz` is UNCHANGED (no equation touches the MAXBAS weights).
 
 ## Artifacts
 
@@ -141,6 +144,16 @@ generator.
   fractional-maxbas routing path. The cold-tail temps drive nonzero
   precip_snow/snow_melt on many steps (snow routine non-vacuous).
 
+### hbv_camels_06224000_overflow.npz (above-FC overflow stress, corrected model)
+- Params (stored): canonical params with fc=50.0 and beta=6.0 (low field capacity,
+  steep recharge); all other params canonical (maxbas=3.0). Forcing = the canonical
+  fixture's precip/temp/pet (deterministic). warmup_length=365, basin_id=camels_06224000.
+- Built from the FULLY corrected HBV model. Non-vacuous: soil moisture reaches FC on
+  101 steps and the above-FC overflow (max 7.55 mm) is routed to upper-zone
+  recharge, so the reported `recharge` flux = base recharge + overflow. Per-step
+  soil mass balance holds (snow_input == dSM + recharge + actual_et), with no
+  discarded water.
+
 ### hbv_triangular_weights.npz (true Rust MAXBAS kernel table)
 - Built from the genuine Rust binding `hbv_light.hbv_triangular_weights(maxbas)`,
   NOT a Python mirror.
@@ -154,8 +167,12 @@ generator.
   0.5, so the oracle divides by the sum to reach 1.0 (load-bearing; do not skip).
 - Number of active weights n = max(ceil(maxbas), 1): maxbas 1->1, 2->2, 2.5->3,
   7->7. Integer maxbas yields symmetric weights.
-- The routing convolution is read-before-shift, giving an inherent +1-step lag:
-  streamflow[0] == 0 from the zero-init buffer. Even maxbas=1 is a pure 1-step delay.
+- The routing convolution is read-after-shift (same-day ordinate-1 term; no forced
+  lag): the routed streamflow turns on the same step qgw first does. streamflow[0]
+  is still 0 only because qgw[0]==0 (SUZ/SLZ fill before any groundwater outflow),
+  not because of a routing lag.
+- Above-FC soil moisture is routed to upper-zone recharge (mass-conserving; Seibert
+  & Vis 2012); the reported `recharge` flux is the total soil->upper-zone flux.
 - warmup_length=365 is METADATA ONLY: the pydrology core does no warm-up trimming
   (full 12333-row series written); the parity consumer discards the first 365 days.
 - The HBV-Light oracle hard-validates ONLY maxbas in [1.0, 7.0]; the other 13

@@ -91,8 +91,17 @@ a note**; for a corrected model, its equations are the reference and its golden
 day ordinate-1 term; removes a spurious +1-day lag), matching airGR `MOD_GR6J`;
 (2) `actual_exchange_total = actual_exchange_routing + actual_exchange_direct + F`
 (= airGR `MISC(15) = AEXCH1 + AEXCH2 + EXCH`). The three GR6J run/step `.npz` are
-now corrected-Python regression snapshots. This applies to GR6J; HBV fixtures
-remain Rust-parity snapshots pending its own version-audit step.
+now corrected-Python regression snapshots. HBV-Light version-fidelity corrections
+applied: (1) the MAXBAS routing convolution reads the delay-line head **after** the
+shift (same-day ordinate-1 term; removes a spurious +1-step lag), sharing
+`hydrologeez.convolution.convolve_delay_line` with GR6J (Seibert & Vis 2012);
+(2) soil moisture above field capacity is routed to upper-zone recharge instead of
+being discarded (mass-conserving; Seibert & Vis 2012), so the reported `recharge`
+flux is the total soil->upper-zone flux (base recharge + FC overflow). The HBV run
+`.npz` (canonical, maxbas25, overflow) are now corrected-Python regression
+snapshots; `hbv_triangular_weights.npz` is UNCHANGED (no equation touches the
+MAXBAS weights). With this, **both models' corrected Python equations are the
+oracle** — no model remains a pending-audit Rust-parity snapshot.
 
 Kept-by-decision (documented, not changed): GR6J parameter bounds use the internal
 CODE convention (e.g. x6 ∈ [1, 50]), not the alternative published bounds; the HBV

@@ -1,6 +1,6 @@
 """Generate and verify HBV-Light oracle fixtures from the hydrologeez model.
 
-Writes three self-describing .npz artifacts into <repo>/tests/fixtures/.
+Writes four self-describing .npz artifacts into <repo>/tests/fixtures/.
 Use --verify to rebuild the fixtures in memory and compare them to the
 committed artifacts without writing any .npz files.
 """
@@ -81,6 +81,16 @@ MAXBAS25_PARAMS = np.array(
     ],
     dtype=np.float64,
 )
+# Stress param set for the above-FC overflow fixture: canonical params with a LOW
+# field capacity (fc=50) and STEEP recharge (beta=6) so soil moisture reaches FC on
+# wet steps and the above-FC overflow fires (routed to upper-zone recharge). Both
+# values are in the advisory bounds (fc>=50, beta<=6). Forcing = canonical fixture's
+# precip/temp/pet (deterministic, and EMPIRICALLY fires overflow on 101 steps).
+OVERFLOW_PARAMS = np.array(
+    [0.0, 3.5, 1.0, 0.1, 0.05, 50.0, 0.7, 6.0, 0.3, 0.1, 0.05, 2.0, 20.0, 3.0],
+    dtype=np.float64,
+)
+OVERFLOW_FIXTURE = "hbv_camels_06224000_overflow.npz"
 
 MAXBAS_GRID = np.array([1.0, 2.0, 2.5, 3.0, 3.5, 5.0, 7.0])
 
@@ -190,6 +200,7 @@ def _build_run_from_fixture(npz: FixtureData) -> dict[str, np.ndarray]:
 FIXTURE_BUILDERS: dict[str, FixtureBuilder] = {
     "hbv_camels_06224000.npz": _build_run_from_fixture,
     "hbv_camels_06224000_maxbas25.npz": _build_run_from_fixture,
+    OVERFLOW_FIXTURE: _build_run_from_fixture,
     "hbv_triangular_weights.npz": lambda _npz: build_hbv_weights_table(),
 }
 
@@ -222,44 +233,65 @@ def verify_fixtures(out: Path) -> bool:
     return ok
 
 
+RUN_FIXTURE_NAMES = frozenset({"hbv_camels_06224000.npz", "hbv_camels_06224000_maxbas25.npz", OVERFLOW_FIXTURE})
+
+_RUN_SAVE_KEYS = ("params", "param_names", "warmup_length", "basin_id", *FLUX_KEYS)
+
+
+def _savez_run(path: Path, rebuilt: dict[str, np.ndarray]) -> None:
+    np.savez(
+        path,
+        params=rebuilt["params"],
+        param_names=rebuilt["param_names"],
+        warmup_length=rebuilt["warmup_length"],
+        basin_id=rebuilt["basin_id"],
+        precip=rebuilt["precip"],
+        temp=rebuilt["temp"],
+        pet=rebuilt["pet"],
+        precip_rain=rebuilt["precip_rain"],
+        precip_snow=rebuilt["precip_snow"],
+        snow_pack=rebuilt["snow_pack"],
+        snow_melt=rebuilt["snow_melt"],
+        liquid_water_in_snow=rebuilt["liquid_water_in_snow"],
+        snow_input=rebuilt["snow_input"],
+        soil_moisture=rebuilt["soil_moisture"],
+        recharge=rebuilt["recharge"],
+        actual_et=rebuilt["actual_et"],
+        upper_zone=rebuilt["upper_zone"],
+        lower_zone=rebuilt["lower_zone"],
+        q0=rebuilt["q0"],
+        q1=rebuilt["q1"],
+        q2=rebuilt["q2"],
+        percolation=rebuilt["percolation"],
+        qgw=rebuilt["qgw"],
+        streamflow=rebuilt["streamflow"],
+    )
+
+
 def write_fixtures(out: Path) -> None:
+    # Bootstrap the overflow stress fixture from the canonical fixture's forcing the
+    # first time it is generated (it has no prior committed .npz to read forcing
+    # from). After this write it stores its own precip/temp/pet and rebuilds like any
+    # run fixture via _build_run_from_fixture.
+    overflow_path = out / OVERFLOW_FIXTURE
+    if not overflow_path.exists():
+        with np.load(out / "hbv_camels_06224000.npz", allow_pickle=False) as canon:
+            forcing = forcing_from_fixture(canon)
+        bootstrap = build_hbv_run(
+            params=OVERFLOW_PARAMS,
+            precip=forcing["precip"],
+            pet=forcing["pet"],
+            temp=forcing["temp"],
+        )
+        _savez_run(overflow_path, bootstrap)
+
     for name, builder in FIXTURE_BUILDERS.items():
         with np.load(out / name, allow_pickle=False) as data:
             rebuilt = builder(data)
-        if name in {"hbv_camels_06224000.npz", "hbv_camels_06224000_maxbas25.npz"}:
-            np.savez(
-                out / name,
-                params=rebuilt["params"],
-                param_names=rebuilt["param_names"],
-                warmup_length=rebuilt["warmup_length"],
-                basin_id=rebuilt["basin_id"],
-                precip=rebuilt["precip"],
-                temp=rebuilt["temp"],
-                pet=rebuilt["pet"],
-                precip_rain=rebuilt["precip_rain"],
-                precip_snow=rebuilt["precip_snow"],
-                snow_pack=rebuilt["snow_pack"],
-                snow_melt=rebuilt["snow_melt"],
-                liquid_water_in_snow=rebuilt["liquid_water_in_snow"],
-                snow_input=rebuilt["snow_input"],
-                soil_moisture=rebuilt["soil_moisture"],
-                recharge=rebuilt["recharge"],
-                actual_et=rebuilt["actual_et"],
-                upper_zone=rebuilt["upper_zone"],
-                lower_zone=rebuilt["lower_zone"],
-                q0=rebuilt["q0"],
-                q1=rebuilt["q1"],
-                q2=rebuilt["q2"],
-                percolation=rebuilt["percolation"],
-                qgw=rebuilt["qgw"],
-                streamflow=rebuilt["streamflow"],
-            )
+        if name in RUN_FIXTURE_NAMES:
+            _savez_run(out / name, rebuilt)
         else:
-            np.savez(
-                out / name,
-                maxbas_grid=rebuilt["maxbas_grid"],
-                weights=rebuilt["weights"],
-            )
+            np.savez(out / name, maxbas_grid=rebuilt["maxbas_grid"], weights=rebuilt["weights"])
 
 
 def main() -> None:
@@ -280,7 +312,7 @@ def main() -> None:
 
     out.mkdir(parents=True, exist_ok=True)
     write_fixtures(out)
-    print(f"Wrote 3 HBV fixtures to {out}")
+    print(f"Wrote 4 HBV fixtures to {out}")
 
 
 if __name__ == "__main__":
