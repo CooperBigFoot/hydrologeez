@@ -15,7 +15,7 @@ from hydrologeez.metrics import kge, lognse, mae, nse, pbias, rmse  # noqa: E402
 from hydrologeez.observation import default_streamflow_observation  # noqa: E402
 from hydrologeez.ssm import StateSpaceModel  # noqa: E402
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 __all__ = [
     "StateSpaceModel",
