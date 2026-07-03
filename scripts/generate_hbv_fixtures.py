@@ -1,29 +1,26 @@
-"""Generate golden HBV-Light oracle fixtures from the retired Rust pydrology core.
-
-MUST run inside the pydrology repo environment (which ships the prebuilt `_core`
-extension), NOT the hydrologeez venv, and NOT via maturin. Recommended invocation
-from any cwd:
-
-    uv run --project /Users/nicolaslazaro/Desktop/work/pydrology \
-        python <hydrologeez-worktree>/scripts/generate_hbv_fixtures.py
+"""Generate and verify HBV-Light oracle fixtures from the hydrologeez model.
 
 Writes three self-describing .npz artifacts into <repo>/tests/fixtures/.
-Deterministic: no randomness. Re-running reproduces the array contents exactly.
+Use --verify to rebuild the fixtures in memory and compare them to the
+committed artifacts without writing any .npz files.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
+import sys
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
-import numpy as np
-import pandas as pd  # ty: ignore[unresolved-import]
-from pydrology._core import hbv_light as rust  # ty: ignore[unresolved-import]
-from pydrology.models.hbv_light import Parameters, run  # ty: ignore[unresolved-import]
-from pydrology.types import ForcingData  # ty: ignore[unresolved-import]
+os.environ.setdefault("JAX_ENABLE_X64", "1")
 
-PYDROLOGY_ROOT = Path("/Users/nicolaslazaro/Desktop/work/pydrology")
-DATA_REL = "data/mountainous-us-basins/REGION_NAME=camels/data_type=timeseries/gauge_id=camels_06224000/data.parquet"
+import jax.numpy as jnp
+import numpy as np
+
+from hydrologeez.models.hbv import processes
+from hydrologeez.models.hbv.model import HBVForcing, HBVModel
+
 BASIN_ID = "camels_06224000"
 WARMUP_LENGTH = 365
 ROUTING_BUFFER_SIZE = 7
@@ -46,100 +43,228 @@ PARAM_NAMES = np.array(
     ]
 )
 
-# Canonical, integer-maxbas param set (strictly in-bounds).
-CANONICAL_PARAMS = Parameters(
-    tt=0.0,
-    cfmax=3.5,
-    sfcf=1.0,
-    cwh=0.1,
-    cfr=0.05,
-    fc=250.0,
-    lp=0.7,
-    beta=2.0,
-    k0=0.3,
-    k1=0.1,
-    k2=0.05,
-    perc=2.0,
-    uzl=20.0,
-    maxbas=3.0,
+CANONICAL_PARAMS = np.array(
+    [
+        0.0,
+        3.5,
+        1.0,
+        0.1,
+        0.05,
+        250.0,
+        0.7,
+        2.0,
+        0.3,
+        0.1,
+        0.05,
+        2.0,
+        20.0,
+        3.0,
+    ],
+    dtype=np.float64,
 )
-# Fractional-maxbas param set (maxbas=2.5 -> 3 renormalized UH weights).
-MAXBAS25_PARAMS = Parameters(
-    tt=0.5,
-    cfmax=5.0,
-    sfcf=1.1,
-    cwh=0.1,
-    cfr=0.05,
-    fc=300.0,
-    lp=0.7,
-    beta=2.5,
-    k0=0.4,
-    k1=0.15,
-    k2=0.04,
-    perc=2.5,
-    uzl=25.0,
-    maxbas=2.5,
+MAXBAS25_PARAMS = np.array(
+    [
+        0.5,
+        5.0,
+        1.1,
+        0.1,
+        0.05,
+        300.0,
+        0.7,
+        2.5,
+        0.4,
+        0.15,
+        0.04,
+        2.5,
+        25.0,
+        2.5,
+    ],
+    dtype=np.float64,
 )
 
-# Integer + fractional maxbas spanning the [1, 7] bounds.
 MAXBAS_GRID = np.array([1.0, 2.0, 2.5, 3.0, 3.5, 5.0, 7.0])
 
+FLUX_KEYS = (
+    "precip",
+    "temp",
+    "pet",
+    "precip_rain",
+    "precip_snow",
+    "snow_pack",
+    "snow_melt",
+    "liquid_water_in_snow",
+    "snow_input",
+    "soil_moisture",
+    "recharge",
+    "actual_et",
+    "upper_zone",
+    "lower_zone",
+    "q0",
+    "q1",
+    "q2",
+    "percolation",
+    "qgw",
+    "streamflow",
+)
 
-def params_vec(p: Parameters) -> np.ndarray:
-    return np.array(
-        [
-            p.tt,
-            p.cfmax,
-            p.sfcf,
-            p.cwh,
-            p.cfr,
-            p.fc,
-            p.lp,
-            p.beta,
-            p.k0,
-            p.k1,
-            p.k2,
-            p.perc,
-            p.uzl,
-            p.maxbas,
-        ],
-        dtype=np.float64,
+RTOL = 1e-4
+ATOL = 1e-6
+
+FixtureData = Mapping[str, np.ndarray]
+FixtureBuilder = Callable[[FixtureData], dict[str, np.ndarray]]
+
+
+def _model_from_params(params: np.ndarray) -> HBVModel:
+    p = jnp.asarray(params)
+    return HBVModel(
+        tt=p[0],
+        cfmax=p[1],
+        sfcf=p[2],
+        cwh=p[3],
+        cfr=p[4],
+        fc=p[5],
+        lp=p[6],
+        beta=p[7],
+        k0=p[8],
+        k1=p[9],
+        k2=p[10],
+        perc=p[11],
+        uzl=p[12],
+        maxbas=p[13],
     )
 
 
-def load_forcing(data_path: Path) -> ForcingData:
-    df = pd.read_parquet(data_path)
-    return ForcingData(
-        time=df["date"].to_numpy(),
-        precip=df["mswep_precipitation"].to_numpy(),
-        pet=df["potential_evaporation_sum_FAO_PENMAN_MONTEITH"].to_numpy(),
-        temp=df["temperature_2m_mean"].to_numpy(),  # HBV: temp REQUIRED, field name 'temp'
+def forcing_from_fixture(npz: FixtureData) -> dict[str, np.ndarray]:
+    return {"precip": npz["precip"], "pet": npz["pet"], "temp": npz["temp"]}
+
+
+def build_hbv_run(
+    params: np.ndarray,
+    precip: np.ndarray,
+    pet: np.ndarray,
+    temp: np.ndarray,
+    param_names: np.ndarray = PARAM_NAMES,
+    warmup_length: np.ndarray | int = WARMUP_LENGTH,
+    basin_id: np.ndarray | str = BASIN_ID,
+) -> dict[str, np.ndarray]:
+    model = _model_from_params(params)
+    _obs, fluxes, _final = model.run(
+        HBVForcing(
+            precip=jnp.asarray(precip),
+            pet=jnp.asarray(pet),
+            temp=jnp.asarray(temp),
+        ),
+        return_fluxes=True,
     )
 
-
-def make_run_fixture(out: Path, name: str, params: Parameters, forcing: ForcingData) -> None:
-    fluxes = run(params, forcing).fluxes.to_dict()  # 20 keys
-    np.savez(
-        out / name,
-        params=params_vec(params),
-        param_names=PARAM_NAMES,
-        warmup_length=np.array(WARMUP_LENGTH),
-        basin_id=np.array(BASIN_ID),
-        **fluxes,
-    )
+    fixture = {
+        "params": np.asarray(params, dtype=np.float64),
+        "param_names": np.asarray(param_names),
+        "warmup_length": np.asarray(warmup_length),
+        "basin_id": np.asarray(basin_id),
+    }
+    fixture.update({key: np.asarray(getattr(fluxes, key)) for key in FLUX_KEYS})
+    return fixture
 
 
-def make_weights_table(out: Path) -> None:
+def build_hbv_weights_table() -> dict[str, np.ndarray]:
     weights = np.zeros((MAXBAS_GRID.size, ROUTING_BUFFER_SIZE), dtype=np.float64)
     for i, maxbas in enumerate(MAXBAS_GRID):
-        w = np.asarray(rust.hbv_triangular_weights(float(maxbas)), dtype=np.float64)
-        weights[i, : w.size] = w  # zero-pad beyond ceil(maxbas)
-    np.savez(out / "hbv_triangular_weights.npz", maxbas_grid=MAXBAS_GRID, weights=weights)
+        weights[i] = np.asarray(processes.compute_triangular_weights(jnp.asarray(maxbas)))
+    return {"maxbas_grid": MAXBAS_GRID, "weights": weights}
+
+
+def _build_run_from_fixture(npz: FixtureData) -> dict[str, np.ndarray]:
+    forcing = forcing_from_fixture(npz)
+    return build_hbv_run(
+        params=npz["params"],
+        precip=forcing["precip"],
+        pet=forcing["pet"],
+        temp=forcing["temp"],
+        param_names=npz["param_names"],
+        warmup_length=npz["warmup_length"],
+        basin_id=npz["basin_id"],
+    )
+
+
+FIXTURE_BUILDERS: dict[str, FixtureBuilder] = {
+    "hbv_camels_06224000.npz": _build_run_from_fixture,
+    "hbv_camels_06224000_maxbas25.npz": _build_run_from_fixture,
+    "hbv_triangular_weights.npz": lambda _npz: build_hbv_weights_table(),
+}
+
+
+def _assert_arrays_match(name: str, key: str, got: np.ndarray, ref: np.ndarray) -> None:
+    err_msg = f"{name}:{key}"
+    if np.issubdtype(ref.dtype, np.floating):
+        np.testing.assert_allclose(got, ref, rtol=RTOL, atol=ATOL, err_msg=err_msg)
+    else:
+        np.testing.assert_array_equal(got, ref, err_msg=err_msg)
+
+
+def verify_fixtures(out: Path) -> bool:
+    ok = True
+    for name, builder in FIXTURE_BUILDERS.items():
+        with np.load(out / name, allow_pickle=False) as data:
+            rebuilt = builder(data)
+            try:
+                if set(rebuilt) != set(data.files):
+                    missing = sorted(set(data.files) - set(rebuilt))
+                    extra = sorted(set(rebuilt) - set(data.files))
+                    raise AssertionError(f"{name}: keys differ missing={missing} extra={extra}")
+                for key, got in rebuilt.items():
+                    _assert_arrays_match(name, key, got, data[key])
+            except AssertionError as exc:
+                ok = False
+                print(f"FAIL {name}: {exc}")
+            else:
+                print(f"PASS {name}")
+    return ok
+
+
+def write_fixtures(out: Path) -> None:
+    for name, builder in FIXTURE_BUILDERS.items():
+        with np.load(out / name, allow_pickle=False) as data:
+            rebuilt = builder(data)
+        if name in {"hbv_camels_06224000.npz", "hbv_camels_06224000_maxbas25.npz"}:
+            np.savez(
+                out / name,
+                params=rebuilt["params"],
+                param_names=rebuilt["param_names"],
+                warmup_length=rebuilt["warmup_length"],
+                basin_id=rebuilt["basin_id"],
+                precip=rebuilt["precip"],
+                temp=rebuilt["temp"],
+                pet=rebuilt["pet"],
+                precip_rain=rebuilt["precip_rain"],
+                precip_snow=rebuilt["precip_snow"],
+                snow_pack=rebuilt["snow_pack"],
+                snow_melt=rebuilt["snow_melt"],
+                liquid_water_in_snow=rebuilt["liquid_water_in_snow"],
+                snow_input=rebuilt["snow_input"],
+                soil_moisture=rebuilt["soil_moisture"],
+                recharge=rebuilt["recharge"],
+                actual_et=rebuilt["actual_et"],
+                upper_zone=rebuilt["upper_zone"],
+                lower_zone=rebuilt["lower_zone"],
+                q0=rebuilt["q0"],
+                q1=rebuilt["q1"],
+                q2=rebuilt["q2"],
+                percolation=rebuilt["percolation"],
+                qgw=rebuilt["qgw"],
+                streamflow=rebuilt["streamflow"],
+            )
+        else:
+            np.savez(
+                out / name,
+                maxbas_grid=rebuilt["maxbas_grid"],
+                weights=rebuilt["weights"],
+            )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pydrology-root", type=Path, default=PYDROLOGY_ROOT)
+    parser.add_argument("--verify", action="store_true")
     parser.add_argument(
         "--out",
         type=Path,
@@ -148,12 +273,13 @@ def main() -> None:
     args = parser.parse_args()
 
     out: Path = args.out
-    out.mkdir(parents=True, exist_ok=True)
-    forcing = load_forcing(args.pydrology_root / DATA_REL)
+    if args.verify:
+        if not verify_fixtures(out):
+            sys.exit(1)
+        return
 
-    make_run_fixture(out, "hbv_camels_06224000.npz", CANONICAL_PARAMS, forcing)
-    make_run_fixture(out, "hbv_camels_06224000_maxbas25.npz", MAXBAS25_PARAMS, forcing)
-    make_weights_table(out)
+    out.mkdir(parents=True, exist_ok=True)
+    write_fixtures(out)
     print(f"Wrote 3 HBV fixtures to {out}")
 
 

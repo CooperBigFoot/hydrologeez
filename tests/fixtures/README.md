@@ -8,15 +8,21 @@ fixture and never re-type constants. Parity target across the JAX rewrite is
 
 ## Regeneration (deterministic, no auto-escalation)
 
-Run from the pydrology environment, NOT the hydrologeez venv, NOT maturin:
+Run from the hydrologeez venv; no pydrology environment, maturin build, or
+external parquet is used.
 
-    uv run --project /Users/nicolaslazaro/Desktop/work/pydrology \
-        python <hydrologeez-worktree>/scripts/generate_gr6j_fixtures.py
+Verify the committed fixtures reproduce from the hydrologeez model:
 
-The script reloads `gauge_id=camels_06224000/data.parquet`, builds
-`ForcingData(time=df['date'], precip=df['mswep_precipitation'],
-pet=df['potential_evaporation_sum_FAO_PENMAN_MONTEITH'])`, runs both param sets,
-builds the Rust UH table, and emits the crafted step-branch artifact.
+    uv run python scripts/generate_gr6j_fixtures.py --verify
+
+`--verify` regenerates each fixture in memory and asserts every array within
+rtol=1e-4/atol=1e-6, exits nonzero on any mismatch, and never overwrites a
+`.npz`. Forcing is read from each run fixture's own stored `precip` and `pet`
+columns; the retired pydrology data parquet is no longer used. The oracle is now
+the hydrologeez model: `GR6J.run` for series, `GR6J.transition` for step
+branches, and `processes.compute_uh_ordinates` for the UH table. The `.npz`
+files themselves are unchanged by S0; this step only repoints and proves the
+generator.
 
 ## Artifacts
 
@@ -98,20 +104,21 @@ rewrite is ~1e-4 relative (rtol=1e-4 + small atol), not bit-exact (see docs/DESI
 
 ## Regeneration (deterministic, no randomness)
 
-Run from the pydrology environment, NOT the hydrologeez venv, NOT maturin:
+Run from the hydrologeez venv; no pydrology environment, maturin build, or
+external parquet is used.
 
-    uv run --project /Users/nicolaslazaro/Desktop/work/pydrology \
-        python <hydrologeez-worktree>/scripts/generate_hbv_fixtures.py
+Verify the committed fixtures reproduce from the hydrologeez model:
 
-The script reloads `gauge_id=camels_06224000/data.parquet` and builds
-`ForcingData(time=df['date'], precip=df['mswep_precipitation'],
-pet=df['potential_evaporation_sum_FAO_PENMAN_MONTEITH'],
-temp=df['temperature_2m_mean'])`. Temperature is REQUIRED by HBV-Light and the
-ForcingData field name is `temp` (not `temperature`). CONFIRMED temperature column:
-`temperature_2m_mean` [C], range -31.703 to 18.316 (the cold tail exercises
-snow/melt/refreeze across the full series, so no separate snow-branch fixture is
-needed). It runs both param sets, dumps `result.fluxes.to_dict()` (20 keys), and
-builds the MAXBAS kernel table via `hbv_light.hbv_triangular_weights(maxbas)`.
+    uv run python scripts/generate_hbv_fixtures.py --verify
+
+`--verify` regenerates each fixture in memory and asserts every array within
+rtol=1e-4/atol=1e-6, exits nonzero on any mismatch, and never overwrites a
+`.npz`. Forcing is read from each run fixture's own stored `precip`, `pet`, and
+`temp` columns; the retired pydrology data parquet is no longer used. The oracle
+is now the hydrologeez model: `HBVModel.run` for series and
+`processes.compute_triangular_weights` for the MAXBAS kernel table. The `.npz`
+files themselves are unchanged by S0; this step only repoints and proves the
+generator.
 
 ## Artifacts
 
