@@ -11,6 +11,8 @@ from __future__ import annotations
 import jax.numpy as jnp
 from jax import Array
 
+from hydrologeez.convolution import convolve_delay_line
+
 from .constants import EXP_BRANCH_THRESHOLD, MAX_EXP_ARG, MAX_TANH_ARG, NH, PERC_CONSTANT, D
 
 
@@ -132,11 +134,11 @@ def compute_uh_ordinates(x4: Array) -> tuple[Array, Array]:
 
 
 def convolve_uh(states: Array, ordinates: Array, input_value: Array) -> tuple[Array, Array]:
-    """One-step delay-line convolution (read output before shift).
+    """One-step delay-line convolution (read output AFTER the shift).
 
-    Returns (output, new_states). Mirrors unit_hydrographs.rs:64-73.
+    Returns (output, new_states). Delegates to the shared
+    :func:`hydrologeez.convolution.convolve_delay_line`; matches airGR MOD_GR6J
+    (shift StUH first, then read StUH1(1)/StUH2(1) — same-day ordinate-1 term,
+    no forced one-step lag).
     """
-    output = states[0]
-    shifted = jnp.concatenate([states[1:], jnp.zeros((1,), dtype=states.dtype)])
-    new_states = shifted + ordinates * input_value
-    return output, new_states
+    return convolve_delay_line(states, ordinates, input_value)

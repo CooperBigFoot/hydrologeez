@@ -101,7 +101,7 @@ def reference_step(
         "exchange": f,
         "actual_exchange_routing": aex_routing,
         "actual_exchange_direct": aex_direct,
-        "actual_exchange_total": aex_routing + aex_direct,
+        "actual_exchange_total": aex_routing + aex_direct + f,
         "qr": qr,
         "qrexp": qrexp,
         "exponential_store": new_exp,
