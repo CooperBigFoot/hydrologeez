@@ -34,8 +34,9 @@ negative), and the two unit-hydrograph delay-line buffers `uh1[20]`, `uh2[40]`
    `Perc = S * (1 - (1 + (S/x1)^4 / 25.62890625)^(-0.25))`,
    where `25.62890625 = (9/4)^4`. Total effective rainfall `= Pr + Perc`.
 3. **UH split.** `uh1_input = 0.9*eff`, `uh2_input = 0.1*eff` (`B = 0.9`).
-4. **UH convolution.** `q9` from UH1, `q1` from UH2 (delay line; output read
-   before the shift).
+4. **UH convolution.** `q9` from UH1, `q1` from UH2 (delay line; the head is read
+   AFTER the shift injects this step's input — the same-day ordinate-1 term,
+   matching airGR MOD_GR6J; no forced one-step lag).
 5. **Exchange.** `F = x2 * (R/x3 - x5)`.
 6. **Routing store.** `routing_input = 0.6*q9` (`C = 0.4`); `R_tmp = R + 0.6*q9 + F`;
    clamp `R >= 0` (tracking `actual_exchange_routing`);

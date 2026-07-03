@@ -53,7 +53,7 @@ def forward_and_parity() -> tuple[GR6J, GR6JForcing, int]:
     max_rel = float(np.max(np.abs(sim[warmup:] - oracle[warmup:]) / (np.abs(oracle[warmup:]) + 1e-8)))
     nse_val = float(nse(jnp.asarray(oracle[warmup:]), jnp.asarray(sim[warmup:])))
     kge_val = float(kge(jnp.asarray(oracle[warmup:]), jnp.asarray(sim[warmup:])))
-    print(f"[parity] max relative streamflow error vs Rust oracle: {max_rel:.2e}")
+    print(f"[parity] max relative streamflow error vs committed oracle fixture: {max_rel:.2e}")
     print(f"[metrics] NSE = {nse_val:.6f}; KGE = {kge_val:.6f} (post warm-up)")
     return model, forcing, warmup
 

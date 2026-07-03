@@ -92,7 +92,7 @@ class GR6J(StateSpaceModel):
         qd, actual_exchange_direct = processes.direct_branch(q1, exchange_f)
 
         streamflow = jnp.maximum(qr + qrexp + qd, 0.0)
-        actual_exchange_total = actual_exchange_routing + actual_exchange_direct
+        actual_exchange_total = actual_exchange_routing + actual_exchange_direct + exchange_f
 
         new_state = State(
             production_store=s_after_perc,

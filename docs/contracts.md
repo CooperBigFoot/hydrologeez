@@ -84,9 +84,19 @@ Coverage that must ship with non-vacuous Rust-oracle evidence:
   `QRExp = Exp + x6/exp(AR)`) and the **+33 AR clamp**, via the crafted single-step
   oracle artifact.
 
-Where Rust is wrong, the JAX rewrite corrects it and updates the fixture **with a
-note**. Known noted deviation: `actual_exchange_total = actual_exchange_routing +
-actual_exchange_direct` (matches Rust, excludes `F`); airGR includes `F`.
+Where Rust is wrong, the JAX rewrite corrects it and regenerates the fixture **with
+a note**; for a corrected model, its equations are the reference and its golden
+`.npz` are regression snapshots of them. GR6J version-fidelity corrections applied:
+(1) the UH routing convolution reads the delay-line head **after** the shift (same-
+day ordinate-1 term; removes a spurious +1-day lag), matching airGR `MOD_GR6J`;
+(2) `actual_exchange_total = actual_exchange_routing + actual_exchange_direct + F`
+(= airGR `MISC(15) = AEXCH1 + AEXCH2 + EXCH`). The three GR6J run/step `.npz` are
+now corrected-Python regression snapshots. This applies to GR6J; HBV fixtures
+remain Rust-parity snapshots pending its own version-audit step.
+
+Kept-by-decision (documented, not changed): GR6J parameter bounds use the internal
+CODE convention (e.g. x6 ∈ [1, 50]), not the alternative published bounds; the HBV
+explicit-split store over-draw follows standard forward-Euler and is retained.
 
 ## 7. Tooling
 

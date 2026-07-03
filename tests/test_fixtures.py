@@ -66,10 +66,10 @@ def test_exchange_fixture_params_and_clamp():
     assert np.any(d["actual_exchange_routing"] != d["exchange"])
     # ... and non-clamp steps also exist (both exchange branches present)
     assert np.any(d["actual_exchange_routing"] == d["exchange"])
-    # Rust definition: total == routing + direct (excludes F)
+    # airGR MISC(15): total == routing + direct + F (includes the exchange leg)
     np.testing.assert_allclose(
         d["actual_exchange_total"],
-        d["actual_exchange_routing"] + d["actual_exchange_direct"],
+        d["actual_exchange_routing"] + d["actual_exchange_direct"] + d["exchange"],
         atol=1e-12,
     )
 

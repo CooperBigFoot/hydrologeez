@@ -20,9 +20,11 @@ rtol=1e-4/atol=1e-6, exits nonzero on any mismatch, and never overwrites a
 `.npz`. Forcing is read from each run fixture's own stored `precip` and `pet`
 columns; the retired pydrology data parquet is no longer used. The oracle is now
 the hydrologeez model: `GR6J.run` for series, `GR6J.transition` for step
-branches, and `processes.compute_uh_ordinates` for the UH table. The `.npz`
-files themselves are unchanged by S0; this step only repoints and proves the
-generator.
+branches, and `processes.compute_uh_ordinates` for the UH table. The three GR6J
+run/step `.npz` (canonical, exchange, step_branches) are regenerated from the
+corrected model in the version-audit step — routing reads the delay-line head
+after the shift (same-day term; no +1-day lag) and actual_exchange_total includes
+F; `gr6j_uh_ordinates.npz` is UNCHANGED (no equation touches the UH ordinates).
 
 ## Artifacts
 
@@ -49,12 +51,11 @@ generator.
   an unphysical-but-numerically-sound oracle regime; relative-tolerance parity is
   safe because both impls run the identical f64 recurrence.
 
-### actual_exchange_total -- resolution (known Rust deviation)
-- Milestone-1 MATCHES Rust exactly: actual_exchange_total =
-  actual_exchange_routing + actual_exchange_direct, EXCLUDES F. Confirmed
-  total == routing + direct to 0.0 on the exchange fixture.
-- airGR includes F in the total; this difference is a NOTED known deviation,
-  deferred to a follow-up. Parity here is to the Rust definition.
+### actual_exchange_total -- resolution (now matches airGR)
+- actual_exchange_total = actual_exchange_routing + actual_exchange_direct + F
+  (= airGR MISC(15) = AEXCH1 + AEXCH2 + EXCH). The prior F-omission deviation is
+  CLOSED. On the exchange fixture total == routing + direct + exchange (F nonzero);
+  on the canonical fixture x2=0 so F=0 and the term is silent.
 
 ### Parameter bounds note
 - x6 uses the CODE bounds [1, 50] (constants.rs) for parity, not the documented
