@@ -12,6 +12,8 @@ from __future__ import annotations
 import jax.numpy as jnp
 from jax import Array
 
+from hydrologeez.convolution import convolve_delay_line
+
 from .constants import ROUTING_BUFFER_SIZE
 
 
@@ -94,14 +96,21 @@ def compute_actual_et(pet: Array, sm: Array, fc: Array, lp: Array) -> Array:
     return jnp.where(guard, 0.0, et_act)
 
 
-def update_soil_moisture(sm: Array, soil_input: Array, recharge: Array, et_act: Array, fc: Array) -> Array:
-    """new_sm = clamp(sm + (soil_input - recharge) - et_act, 0, fc).
+def update_soil_moisture(
+    sm: Array, soil_input: Array, recharge: Array, et_act: Array, fc: Array
+) -> tuple[Array, Array]:
+    """Update soil moisture; return (new_sm, overflow).
 
-    Mirrors processes.rs:111-121. The clamp to fc SILENTLY DISCARDS water above FC
-    (mass leak) -- replicate verbatim for parity.
+    ``new_sm_raw = sm + (soil_input - recharge) - et_act``. The above-field-capacity
+    excess ``overflow = max(new_sm_raw - fc, 0)`` is RETURNED so the caller routes
+    it to upper-zone recharge (mass-conserving; Seibert & Vis 2012) instead of
+    discarding it. ``new_sm`` is clamped to ``[0, fc]``; the 0-floor over-draw
+    behaviour (standard forward-Euler HBV) is unchanged.
     """
-    new_sm = sm + (soil_input - recharge) - et_act
-    return jnp.clip(new_sm, 0.0, fc)
+    new_sm_raw = sm + (soil_input - recharge) - et_act
+    overflow = jnp.maximum(new_sm_raw - fc, 0.0)
+    new_sm = jnp.clip(new_sm_raw, 0.0, fc)
+    return new_sm, overflow
 
 
 def upper_zone_outflows(suz: Array, k0: Array, k1: Array, uzl: Array) -> tuple[Array, Array]:
@@ -169,14 +178,12 @@ def compute_triangular_weights(maxbas: Array) -> Array:
 
 
 def convolve_routing(buffer: Array, weights: Array, qgw: Array) -> tuple[Array, Array]:
-    """Read-before-shift length-7 delay line; return (qsim, new_buffer).
+    """Read-after-shift length-7 delay line; return (qsim, new_buffer).
 
-    Mirrors routing.rs:98-117 (convolve_triangular). Output is the head read BEFORE
-    injecting the current qgw, so qgw at time t first reaches output at t+1 (the
-    inherent +1-step lag); first output from a zero-init buffer is 0. Identical in
-    shape to GR6J convolve_uh but with one buffer (length 7) and a length-7 kernel.
+    Delegates to the shared :func:`hydrologeez.convolution.convolve_delay_line`:
+    shift the buffer one slot, inject ``weights * qgw``, then read the new head (the
+    same-day ordinate-1 term; no forced one-step lag), matching the published
+    HBV-Light routing (Seibert & Vis 2012; Seibert 2005 manual Eq. 6). Shares the
+    same helper as GR6J's unit-hydrograph convolution.
     """
-    qsim = buffer[0]
-    shifted = jnp.concatenate([buffer[1:], jnp.zeros((1,), dtype=buffer.dtype)])
-    new_buffer = shifted + weights * qgw
-    return qsim, new_buffer
+    return convolve_delay_line(buffer, weights, qgw)

@@ -105,20 +105,23 @@ class HBVModel(StateSpaceModel):
         )
         snow_input = p_rain + snow_outflow
 
-        # --- Soil routine (recharge + ET + update all read start-of-step sm) --- run.rs:205-211
+        # --- Soil routine (recharge + ET + update all read start-of-step sm) --- Seibert & Vis (2012)
         recharge = processes.compute_recharge(snow_input, state.zone_sm, self.fc, self.beta)
         et_act = processes.compute_actual_et(pet, state.zone_sm, self.fc, self.lp)
-        new_sm = processes.update_soil_moisture(state.zone_sm, snow_input, recharge, et_act, self.fc)
+        new_sm, sm_overflow = processes.update_soil_moisture(state.zone_sm, snow_input, recharge, et_act, self.fc)
+        # Above-FC excess routes to upper-zone recharge (not discarded). The reported
+        # recharge flux is the TOTAL soil->upper-zone flux (base recharge + overflow).
+        recharge_total = recharge + sm_overflow
 
         # --- Response routine (all read OLD SUZ/SLZ; explicit operator-splitting) --- run.rs:214-222
         q0, q1 = processes.upper_zone_outflows(state.upper_zone, self.k0, self.k1, self.uzl)
         perc = processes.compute_percolation(state.upper_zone, self.perc)
-        new_suz = processes.update_upper_zone(state.upper_zone, recharge, q0, q1, perc)
+        new_suz = processes.update_upper_zone(state.upper_zone, recharge_total, q0, q1, perc)
         q2 = processes.lower_zone_outflow(state.lower_zone, self.k2)
         new_slz = processes.update_lower_zone(state.lower_zone, perc, q2)
         qgw = q0 + q1 + q2
 
-        # --- Routing (reads OLD buffer; 1-step lag) --- run.rs:224-225
+        # --- Routing (read-after-shift; same-day ordinate-1 term, no forced lag) ---
         qsim, new_buffer = processes.convolve_routing(state.routing_buffer, uh_weights, qgw)
 
         new_state = HBVState(
@@ -140,7 +143,7 @@ class HBVModel(StateSpaceModel):
             liquid_water_in_snow=new_lw,
             snow_input=snow_input,
             soil_moisture=new_sm,
-            recharge=recharge,
+            recharge=recharge_total,
             actual_et=et_act,
             upper_zone=new_suz,
             lower_zone=new_slz,

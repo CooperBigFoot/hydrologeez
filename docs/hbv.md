@@ -64,12 +64,16 @@ this order — **all branches within a phase read the same start-of-step store
    - *Actual ET:* `lp_threshold = lp*fc`; `ET = pet` if `SM >= lp_threshold` else
      `pet*SM/lp_threshold`; capped `ET = min(ET, max(SM, 0))`; `0` if `fc <= 0` or
      `lp <= 0`.
-   - *Update:* `SM' = clip(SM + (snow_input - recharge) - ET, 0, fc)`.
+   - *Update:* `SM_raw = SM + (snow_input - recharge) - ET`;
+     `overflow = max(SM_raw - fc, 0)` is routed to upper-zone recharge (not
+     discarded); `SM' = clip(SM_raw, 0, fc)`. The reported `recharge` flux is the
+     total soil->upper-zone flux `recharge + overflow`.
 3. **Response.** `q0`, `q1`, `perc` all read the same start-of-step `SUZ`; `q2`
    reads start-of-step `SLZ`.
    - `q0 = k0 * max(SUZ - uzl, 0)`; `q1 = k1 * SUZ`.
    - `perc = min(perc_max, max(SUZ, 0))`.
-   - `SUZ' = max(SUZ + recharge - q0 - q1 - perc, 0)`.
+   - `SUZ' = max(SUZ + recharge_total - q0 - q1 - perc, 0)` (recharge_total =
+     base recharge + above-FC overflow).
    - `q2 = k2 * SLZ`; `SLZ' = max(SLZ + perc - q2, 0)`.
    - `qgw = q0 + q1 + q2` (percolation is an internal SUZ→SLZ transfer, not in
      `qgw`).
@@ -96,10 +100,12 @@ bound):
   active-bin count is `ceil(maxbas)`). The kernel is value-continuous, not
   gradient-continuous — the same treatment GR6J gives integer `x4`.
 
-The convolution is a **read-before-shift** length-7 delay line: the output is the
-head of the buffer read *before* the current `qgw` is injected, so there is an
-inherent **+1-step routing lag** — `streamflow[0] == 0` from the zero-init buffer,
-and even `maxbas = 1` is a pure one-step delay.
+The convolution is a **read-after-shift** length-7 delay line: the buffer is
+shifted one slot, `weights * qgw` is injected, then the new head is read (the
+same-day ordinate-1 term). There is **no forced one-step lag** — the routed pulse
+turns on the same step `qgw` does — matching the published HBV-Light routing
+(Seibert & Vis 2012; Seibert 2005 manual Eq. 6). It shares
+`hydrologeez.convolution.convolve_delay_line` with GR6J.
 
 ## Fluxes (20 outputs, in order)
 
@@ -111,23 +117,26 @@ upper_zone, lower_zone, q0, q1, q2, percolation, qgw, streamflow
 
 `precip`/`temp`/`pet` echo the forcing; `snow_pack`, `liquid_water_in_snow`,
 `soil_moisture`, `upper_zone`, `lower_zone` are post-update stores; the rest are
-within-step fluxes; `qgw = q0 + q1 + q2`; `streamflow` is the routed `qgw` with the
-+1-step lag.
+within-step fluxes; `qgw = q0 + q1 + q2`; `recharge` is the total soil->upper-zone
+flux (base recharge + above-FC overflow); `streamflow` is the routed `qgw`
+(same-day read-after-shift).
 
-## Mirrored oracle deviations (noted, for parity)
+## Corrected version-fidelity note + retained deviations
 
-The Rust oracle is the numerical reference, not gospel; these behaviours are
-reproduced verbatim and noted:
+The soil routine is **corrected** to the published HBV-Light: above-field-capacity
+soil moisture is routed to upper-zone recharge (mass-conserving; Seibert & Vis
+2012), not discarded, so the reported `recharge` flux is the total soil->upper-zone
+flux (base recharge + FC overflow). The HBV run fixtures are corrected-Python
+regression snapshots of the documented equations.
 
-1. **Above-FC soil overflow leak.** `SM'` is clamped to `fc` and water above field
-   capacity is silently discarded rather than routed to recharge. Canonical
-   HBV-Light routes the excess into recharge; this oracle does not.
-2. **Explicit-split over-draw.** `q0`, `q1`, `perc` all draw from the same
+These behaviours are retained by decision and reproduced verbatim:
+
+1. **Explicit-split over-draw.** `q0`, `q1`, `perc` all draw from the same
    start-of-step `SUZ`; the store is clamped at `max(0)` after subtracting all of
    them, but the already-emitted `q0`/`q1` are not reduced, so mass can be created
-   on over-draw. The lower zone behaves the same for `q2`. This is standard
-   explicit-HBV behaviour, ported as-is.
-3. **Only `maxbas` is range-validated.** The other 13 parameters run silently out
+   on over-draw. The lower zone behaves the same for `q2`. Standard explicit-HBV
+   (forward-Euler) behaviour, ported as-is.
+2. **Only `maxbas` is range-validated.** The other 13 parameters run silently out
    of range.
 
 ## Usage

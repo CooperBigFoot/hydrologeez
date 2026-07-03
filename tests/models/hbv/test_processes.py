@@ -33,7 +33,11 @@ FIXTURES = Path(__file__).parents[2] / "fixtures"
 RTOL = 1e-4
 ATOL = 1e-6
 
-RUN_FIXTURES = ("hbv_camels_06224000.npz", "hbv_camels_06224000_maxbas25.npz")
+RUN_FIXTURES = (
+    "hbv_camels_06224000.npz",
+    "hbv_camels_06224000_maxbas25.npz",
+    "hbv_camels_06224000_overflow.npz",
+)
 KERNEL_FIXTURE = "hbv_triangular_weights.npz"
 
 FLUX_KEYS = (
@@ -75,13 +79,14 @@ def reference_step(
 
     recharge = compute_recharge(snow_input, sm, fc, beta)
     et_act = compute_actual_et(pet, sm, fc, lp)
-    new_sm = update_soil_moisture(sm, snow_input, recharge, et_act, fc)
+    new_sm, sm_overflow = update_soil_moisture(sm, snow_input, recharge, et_act, fc)
+    recharge_total = recharge + sm_overflow
 
     suz = state.upper_zone
     slz = state.lower_zone
     q0, q1 = upper_zone_outflows(suz, k0, k1, uzl)
     perc = compute_percolation(suz, perc_max)
-    new_suz = update_upper_zone(suz, recharge, q0, q1, perc)
+    new_suz = update_upper_zone(suz, recharge_total, q0, q1, perc)
     q2 = lower_zone_outflow(slz, k2)
     new_slz = update_lower_zone(slz, perc, q2)
     qgw = q0 + q1 + q2
@@ -107,7 +112,7 @@ def reference_step(
         "liquid_water_in_snow": new_lw,
         "snow_input": snow_input,
         "soil_moisture": new_sm,
-        "recharge": recharge,
+        "recharge": recharge_total,
         "actual_et": et_act,
         "upper_zone": new_suz,
         "lower_zone": new_slz,
@@ -192,14 +197,40 @@ def test_maxbas_kernel_gradient_finite_and_value_continuity() -> None:
     assert_allclose(np.asarray(left), np.asarray(right), atol=1e-2)
 
 
-def test_routing_one_step_lag() -> None:
+def test_routing_reads_after_shift() -> None:
+    # Unit: a zero-init buffer emits the SAME-DAY ordinate-1 term, not 0.
     weights = compute_triangular_weights(jnp.asarray(2.0, dtype=jnp.float64))
     buffer = jnp.zeros(ROUTING_BUFFER_SIZE, dtype=jnp.float64)
-    qsim, _new = convolve_routing(buffer, weights, jnp.asarray(50.0, dtype=jnp.float64))
-    assert_allclose(np.asarray(qsim), 0.0, atol=0.0)
+    inflow = jnp.asarray(50.0, dtype=jnp.float64)
+    qsim, _new = convolve_routing(buffer, weights, inflow)
+    assert_allclose(np.asarray(qsim), np.asarray(weights[0] * inflow), rtol=RTOL, atol=ATOL)
+    assert float(qsim) > 0.0  # was exactly 0.0 under the buggy read-before-shift
+    # Series: routed streamflow turns on the SAME step qgw first does (no forced +1 lag).
     data, params, precip, pet, temp = _load_run("hbv_camels_06224000.npz")
     fluxes = run_series(params, precip, pet, temp)
-    assert_allclose(np.asarray(fluxes["streamflow"])[0], 0.0, atol=0.0)
+    qgw = np.asarray(fluxes["qgw"])
+    streamflow = np.asarray(fluxes["streamflow"])
+    first_qgw = int(np.argmax(qgw > 0.0))
+    assert first_qgw > 0  # stores fill before any groundwater outflow
+    assert int(np.argmax(streamflow > 0.0)) == first_qgw  # buggy gave first_qgw + 1
+    w0 = compute_triangular_weights(params[13])[0]
+    assert_allclose(streamflow[first_qgw], np.asarray(w0 * qgw[first_qgw]), rtol=RTOL, atol=ATOL)
+
+
+def test_soil_overflow_returned_and_conserved() -> None:
+    sm = jnp.asarray(40.0, dtype=jnp.float64)
+    soil_input = jnp.asarray(30.0, dtype=jnp.float64)
+    recharge = jnp.asarray(5.0, dtype=jnp.float64)
+    et_act = jnp.asarray(2.0, dtype=jnp.float64)
+    fc = jnp.asarray(50.0, dtype=jnp.float64)
+    new_sm, overflow = update_soil_moisture(sm, soil_input, recharge, et_act, fc)
+    # raw = 40 + 30 - 5 - 2 = 63 > fc=50 -> overflow = 13, new_sm clipped to 50
+    assert_allclose(np.asarray(new_sm), 50.0, rtol=RTOL, atol=ATOL)
+    assert_allclose(np.asarray(overflow), 13.0, rtol=RTOL, atol=ATOL)
+    # mass conservation: soil_input == dSM + (recharge + overflow) + et_act
+    lhs = float(soil_input)
+    rhs = float(new_sm - sm) + float(recharge + overflow) + float(et_act)
+    assert_allclose(lhs, rhs, rtol=RTOL, atol=ATOL)
 
 
 def test_jit_and_finite_gradients() -> None:
