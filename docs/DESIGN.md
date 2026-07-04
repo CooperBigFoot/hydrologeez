@@ -13,9 +13,8 @@ in JAX.**
 - PyPI / import name: `hydrologeez` (`import hydrologeez`).
 - Substrate: `jax` + `equinox`. A model *is* an `eqx.Module` whose fields are its
   parameters.
-- Correctness standard: the **documented per-model equations are the oracle**
-  (see [gr6j.md](gr6j.md), [hbv.md](hbv.md)). Committed numeric fixtures are
-  regression guards, not an external gold standard.
+- Correctness standard: the **documented per-model equations are the
+  specification** (see [gr6j.md](gr6j.md), [hbv.md](hbv.md)).
 
 ## Motivation
 
@@ -129,15 +128,11 @@ implementation.
   `jax_enable_x64` is off. **No silent global x64 flip** (respects other
   libraries in the user's process). Fail fast with the one-line fix.
 
-## Validation — the equations are the oracle
+## Validation — the equations are the specification
 
 - The **documented per-model equations are the specification.** Correctness means
   fidelity to them.
-- **Committed numeric fixtures are regression guards**, not an external gold
-  standard. They were seeded during the initial port and are maintained against
-  the documented equations. Regression tolerance: **within ~1e-4 relative**
-  (`numpy.testing.assert_allclose(rtol=1e-4, atol=1e-6)`), not bit-exact.
-- **Version-fidelity to the published GR6J (airGR) and HBV-Light formulations has been audited and reconciled.** Three confirmed divergences were corrected: (1) a shared read-before-shift routing lag in both the GR6J unit-hydrograph and HBV MAXBAS convolutions is now read-after-shift (same-day ordinate-1 term; matches airGR `MOD_GR6J` and Seibert & Vis 2012), via one shared `convolve_delay_line` helper; (2) GR6J `actual_exchange_total` now includes the exponential-store exchange leg F (airGR `MISC(15) = AEXCH1 + AEXCH2 + EXCH`); (3) HBV above-field-capacity soil moisture is now routed to upper-zone recharge instead of discarded (mass-conserving; Seibert & Vis 2012). Two behaviors are **retained by decision and documented**: the explicit-split (forward-Euler) store over-draw, which standard HBV implementations share (correcting it would diverge from published HBV), and the internal parameter-bound convention. The GR6J "magic constants / clamps" were verified **verbatim against airGR** (no change). The corrected Python equations are the oracle for both models; the committed fixtures are corrected-Python regression snapshots. See `contracts.md`, `gr6j.md`, and `hbv.md`.
+- **Version-fidelity to the published GR6J (airGR) and HBV-Light formulations has been audited and reconciled.** Three confirmed divergences were corrected: (1) a shared read-before-shift routing lag in both the GR6J unit-hydrograph and HBV MAXBAS convolutions is now read-after-shift (same-day ordinate-1 term; matches airGR `MOD_GR6J` and Seibert & Vis 2012), via one shared `convolve_delay_line` helper; (2) GR6J `actual_exchange_total` now includes the exponential-store exchange leg F (airGR `MISC(15) = AEXCH1 + AEXCH2 + EXCH`); (3) HBV above-field-capacity soil moisture is now routed to upper-zone recharge instead of discarded (mass-conserving; Seibert & Vis 2012). Two behaviors are **retained by decision and documented**: the explicit-split (forward-Euler) store over-draw, which standard HBV implementations share (correcting it would diverge from published HBV), and the internal parameter-bound convention. The GR6J "magic constants / clamps" were verified **verbatim against airGR** (no change). The corrected Python equations are the specification for both models. See `contracts.md`, `gr6j.md`, and `hbv.md`.
 
 ## I/O — HDX is the canonical input interface
 
@@ -186,7 +181,7 @@ only when multi-zone HBV / CemaNeige do. HDX is simply the transport for the DEM
 
 **Done (step one — the port):** GR6J and HBV-Light, both standalone, daily, both
 exercising the masked-kernel pattern (GR6J UH, HBV MAXBAS). Both have transition +
-scan + committed regression fixtures.
+scan implementations.
 
 **Out of scope (for now):** GR2M, CemaNeige, GR6J–CemaNeige, glacier coupling,
 multi-zone (elevation-band) HBV. Keep the base contract **open to SSM composition**
