@@ -208,7 +208,7 @@ metrics, the params↔array adapter, and the public
 
 Repo already scaffolded; follow its conventions:
 
-- Build backend: `uv_build`. src layout. `requires-python >=3.13`.
+- Build backend: `uv_build`. src layout. `requires-python >=3.11`.
 - **uv only** (`uv add` / `uv sync` / `uv run`). No pip/poetry/conda.
 - `ruff` (format + lint) and `ty` (type check). Modern typing (`list[str]`,
   `str | None`; no `typing.List/Optional`).

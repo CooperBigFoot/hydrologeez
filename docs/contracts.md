@@ -116,3 +116,20 @@ explicit-split store over-draw follows standard forward-Euler and is retained.
   arrays via `np.asarray`).
 - Every commit bumps the patch version (`uv run bump-my-version bump patch`) and is
   tagged `v$(uv run bump-my-version show current_version)`.
+
+## 8. HDX I/O contract
+
+The model kernel remains format-agnostic. Core hydrologeez imports and numerical
+model execution must not import `polars`; HDX dependencies are loaded only through
+the optional I/O entry points.
+
+HDX is role-opaque, so hydrologeez owns the vocabulary and roles for columns it
+understands. The default canonical dynamic fields are `precip`, `pet`, and `temp`
+as forcing fields and `streamflow` as the target. Foreign column names must be
+adapted through `Vocabulary` overrides instead of changing model forcing classes.
+
+`from_hdx` and `to_hdx` must round-trip hydrologeez streamflow predictions through
+HDX 0.2 scalar datasets. The writer emits string `basin_id` values, sorted
+`datetime64[us]` times, per-basin `scalar_dynamic.parquet`, root
+`scalar_static.parquet`, and a six-field manifest containing `format_version`,
+`name`, `created_at`, `producer_version`, `crs`, and `cadence`.

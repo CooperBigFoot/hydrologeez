@@ -20,6 +20,7 @@ nav:
   - Home: index.md
   - GR6J model: gr6j.md
   - HBV model: hbv.md
+  - HDX I/O: hdx.md
   - Contributor contract: contracts.md
 
 plugins:
