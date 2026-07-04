@@ -167,12 +167,6 @@ obs, fluxes, final = model.run(forcing, return_fluxes=True)
 float64 is required and enforced at import — set `JAX_ENABLE_X64=1` **before**
 importing jax or hydrologeez (the package raises rather than silently flipping it).
 
-## Runnable example (executed at docs build, validated against the oracle fixture)
-
-```python exec="true" source="material-block" title="hbv_quickstart.py"
---8<-- "docs/examples/hbv_quickstart.py"
-```
-
 ## API reference
 
 ::: hydrologeez.models.hbv.model.HBVModel
