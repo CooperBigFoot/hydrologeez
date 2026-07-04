@@ -71,12 +71,3 @@ The writer creates:
 `basin_id` is written as a string and `time` is written as sorted
 `datetime64[us]`. The default dynamic field is `streamflow`; pass `field=` when a
 different prediction column name is needed.
-
-## Runnable example
-
-The example below is included as source in the docs. It is executed by the test
-suite, not by the docs build, so the docs environment does not need the HDX extra.
-
-```python
---8<-- "docs/examples/hdx_quickstart.py"
-```
