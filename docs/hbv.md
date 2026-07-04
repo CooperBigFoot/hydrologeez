@@ -2,10 +2,10 @@
 
 HBV-Light is a 14-parameter daily lumped snow / soil-moisture / groundwater
 rainfall-runoff model. hydrologeez implements the **single-zone (lumped)** variant
-as a differentiable state-space model, validated within ~1e-4 relative against the
-retired Rust `pydrology` oracle. Multi-zone (elevation-band) HBV is out of scope.
+as a differentiable state-space model. Multi-zone (elevation-band) HBV is out of
+scope.
 
-## Parameters (14, canonical order, code bounds used for parity)
+## Parameters (14, canonical order, code bounds)
 
 | # | Param | Meaning | Bounds |
 |---|-------|---------|--------|
@@ -24,9 +24,9 @@ retired Rust `pydrology` oracle. Multi-zone (elevation-band) HBV is out of scope
 | 12 | `uzl` | upper-zone Q0 threshold [mm] | `[0.0, 100.0]` |
 | 13 | `maxbas` | routing/UH base length [days] | `[1.0, 7.0]` |
 
-Only `maxbas` is hard-validated in the oracle (`maxbas ∈ [1, 7]`, tied to the
-fixed length-7 routing buffer). The other 13 bounds are **advisory** — used for
-calibration only; the model runs them silently out of range, mirroring the oracle.
+Only `maxbas` is hard-validated (`maxbas ∈ [1, 7]`, tied to the fixed length-7
+routing buffer). The other 13 bounds are **advisory** — used for calibration
+only; the model runs them silently out of range.
 
 ## State and initialisation
 
@@ -41,7 +41,7 @@ Single-zone state is 12 values, flat layout
 Initial state: `SM = 0.5 * fc` (the only non-zero, parameter-dependent init);
 `SP = LW = SUZ = SLZ = 0`; routing buffer zeroed.
 
-## Transition (per step), in oracle order
+## Transition (per step)
 
 For the lumped, no-elevation model the forcing (`precip`, `temp`, `pet`) passes
 through unchanged. Each step reads the start-of-step stores and updates them in
@@ -90,7 +90,7 @@ bound):
 
 - Bin `i` integrates the triangle density over `[i, min(i+1, maxbas)]`. Bins with
   `i >= maxbas` collapse to zero — that is the mask. `jnp.where`/clamp idioms
-  replace the oracle's `if`/`continue` so the kernel is a smooth function of
+  replace branching `if`/`continue` logic so the kernel is a smooth function of
   `maxbas` and `jax.grad` w.r.t. `maxbas` is finite.
 - **Normalize-by-sum is load-bearing:** the raw per-bin weights integrate to 0.5,
   not 1.0, so the kernel is explicitly divided by its sum (`w / sum(w)` when
@@ -126,8 +126,7 @@ flux (base recharge + above-FC overflow); `streamflow` is the routed `qgw`
 The soil routine is **corrected** to the published HBV-Light: above-field-capacity
 soil moisture is routed to upper-zone recharge (mass-conserving; Seibert & Vis
 2012), not discarded, so the reported `recharge` flux is the total soil->upper-zone
-flux (base recharge + FC overflow). The HBV run fixtures are corrected-Python
-regression snapshots of the documented equations.
+flux (base recharge + FC overflow).
 
 These behaviours are retained by decision and reproduced verbatim:
 
