@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.testing as npt
 import pytest
-from conftest import GEOMETRY_LESS_ROOT, write_scalar_hdx
+from conftest import write_scalar_hdx
 
 from hydrologeez.hdx._polars import require_polars
 from hydrologeez.hdx.loader import from_hdx
@@ -169,8 +169,7 @@ def test_format_version(tmp_path: Path) -> None:
     assert data.basin_ids == ("0001",)
 
 
-@pytest.mark.skipif(not GEOMETRY_LESS_ROOT.exists(), reason="HDX geometry-less fixture is not available")
-def test_real_geometry_less_fixture(geometry_less_root: Path) -> None:
+def test_geometry_less_dataset(geometry_less_root: Path) -> None:
     data = from_hdx(geometry_less_root, forcing_type=GR6JForcing)
 
     assert data.forcing is None
