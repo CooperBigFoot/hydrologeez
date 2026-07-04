@@ -1,8 +1,6 @@
 """GR6J process free functions.
 
-Pure, differentiable JAX ports of the Rust pydrology GR6J oracle
-(crates/pydrology-core/src/gr6j/{processes,unit_hydrographs}.rs and
-run.rs for the transition wiring). Branches use jnp.where for
+Pure, differentiable JAX implementations. Branches use jnp.where for
 diff-cleanliness; all functions are jit-able with finite gradients.
 """
 

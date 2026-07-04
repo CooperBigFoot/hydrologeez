@@ -1,14 +1,13 @@
-"""HBV-Light numerical constants (mirror of the retired Rust pydrology oracle).
+"""HBV-Light numerical constants.
 
-Values taken verbatim from crates/pydrology-core/src/hbv_light/constants.rs.
-Single-zone (lumped) target. Only ``maxbas`` is hard-validated in the oracle
-([1.0, 7.0], tied to the fixed [f64; 7] routing buffer); the other 13 bounds are
-ADVISORY (calibration only) and are NOT range-checked anywhere in the oracle.
+Single-zone (lumped) target. Only ``maxbas`` is hard-validated ([1.0, 7.0],
+tied to the fixed length-7 routing buffer); the other 13 bounds are ADVISORY
+(calibration only) and are NOT range-checked anywhere.
 """
 
-# State-size constants (constants.rs:18-20). Single-zone (lumped) state size:
+# State-size constants. Single-zone (lumped) state size:
 #   n_zones*ZONE_STATE_SIZE + LUMPED_STATE_SIZE + ROUTING_BUFFER_SIZE
-#   = 3*1 + 2 + 7 = 12  (state.rs:50-63 to_array layout)
+#   = 3*1 + 2 + 7 = 12
 ROUTING_BUFFER_SIZE: int = 7  # triangular-UH convolution buffer length
 ZONE_STATE_SIZE: int = 3  # [SP, LW, SM] per zone
 LUMPED_STATE_SIZE: int = 2  # [SUZ, SLZ]
@@ -17,7 +16,7 @@ STATE_SIZE: int = 12  # single-zone flat layout [SP, LW, SM, SUZ, SLZ, b0..b6]
 N_PARAMS: int = 14
 MAXBAS_MAX: float = 7.0  # == ROUTING_BUFFER_SIZE; effective routing upper bound
 
-# Canonical parameter order (constants.rs:9-12).
+# Canonical parameter order.
 PARAM_NAMES: tuple[str, ...] = (
     "tt",
     "cfmax",
@@ -35,8 +34,7 @@ PARAM_NAMES: tuple[str, ...] = (
     "maxbas",
 )
 
-# CODE bounds (constants.rs:118-133). Only maxbas is hard-validated; the rest are
-# advisory (calibration only).
+# CODE bounds. Only maxbas is hard-validated; the rest are advisory (calibration only).
 PARAM_BOUNDS: dict[str, tuple[float, float]] = {
     "tt": (-2.5, 2.5),
     "cfmax": (0.5, 10.0),

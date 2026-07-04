@@ -1,9 +1,7 @@
 """Single-zone HBV-Light as a differentiable state-space model on the SSM base.
 
-Pure JAX/Equinox port of the retired Rust pydrology HBV-Light oracle
-(crates/pydrology-core/src/hbv_light/run.rs single-zone fast path, lines 176-256).
-Lumped (n_zones=1); elevation extrapolation is bypassed exactly as in the oracle
-(input_elevation=None -> zone_temp=temp, zone_precip=precip).
+Pure JAX/Equinox implementation. Lumped (n_zones=1); elevation extrapolation
+is bypassed (input_elevation=None -> zone_temp=temp, zone_precip=precip).
 """
 
 from __future__ import annotations
@@ -28,8 +26,7 @@ class HBVForcing(eqx.Module):
 class HBVFluxes(eqx.Module):
     """All HBV internal fluxes for one step, stacked over time by scan.
 
-    Field order is the canonical 20-flux oracle order
-    (crates/pydrology-core/src/hbv_light/fluxes.rs:12-33, written at run.rs:231-252).
+    Field order is the canonical 20-flux order.
     """
 
     precip: jax.Array
