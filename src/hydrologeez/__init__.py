@@ -11,17 +11,21 @@ enforce_float64()
 
 from hydrologeez import metrics  # noqa: E402
 from hydrologeez.calibration import calibrate_evolutionary, calibrate_nsga2  # noqa: E402
+from hydrologeez.hdx.loader import from_hdx  # noqa: E402
+from hydrologeez.hdx.writer import to_hdx  # noqa: E402
 from hydrologeez.metrics import kge, lognse, mae, nse, pbias, rmse  # noqa: E402
 from hydrologeez.observation import default_streamflow_observation  # noqa: E402
 from hydrologeez.ssm import StateSpaceModel  # noqa: E402
 
-__version__ = "0.1.8"
+__version__ = "0.1.9"
 
 __all__ = [
     "StateSpaceModel",
     "default_streamflow_observation",
     "calibrate_evolutionary",
     "calibrate_nsga2",
+    "from_hdx",
+    "to_hdx",
     "metrics",
     "kge",
     "lognse",

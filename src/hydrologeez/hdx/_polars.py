@@ -19,3 +19,11 @@ def require_polars() -> ModuleType:
     except ImportError as exc:  # pragma: no cover - exercised via monkeypatch in tests
         raise ImportError(_INSTALL_HINT) from exc
     return pl
+
+
+def require_pyarrow() -> ModuleType:
+    try:
+        import pyarrow
+    except ImportError as exc:  # pragma: no cover - exercised via monkeypatch pattern
+        raise ImportError(_INSTALL_HINT) from exc
+    return pyarrow
