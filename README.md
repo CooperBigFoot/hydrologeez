@@ -97,11 +97,13 @@ Gradient-based and evolutionary calibration (using ctrl-freak's `ga` / `nsga2` w
   `jax.value_and_grad` flow through the whole `lax.scan` simulation.
 - **Two calibration paths**: gradient descent (e.g. `optax`) and evolutionary search
   (`ga` / `nsga2` from ctrl-freak, with a batched `evaluate_batch` hook).
-- **Validated numerics**: streamflow matches the retired Rust `pydrology` oracle to
-  ~1e-4 relative error.
 - **Batched simulation** via `batch_run` (vmap over a leading batch axis).
 - **64-bit by default**: import-time x64 enforcement keeps long store recurrences and
   metric reductions numerically stable.
+
+## The name
+
+hydrologeez is **hydrology** + **"geez"**, the exclamation. That is all there is to it.
 
 ## Links
 

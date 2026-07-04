@@ -9,8 +9,6 @@ import pytest
 
 from hydrologeez.hdx._polars import require_polars
 
-GEOMETRY_LESS_ROOT = Path("/Users/nicolaslazaro/Desktop/work/hdx/conformance/valid/geometry-less")
-
 
 def write_scalar_hdx(
     root: Path,
@@ -32,11 +30,11 @@ def write_scalar_hdx(
     root.mkdir(parents=True, exist_ok=True)
     manifest = {
         "format_version": format_version,
-        "layout": "scalar",
-        "geometry": "none",
-        "index": "basin",
-        "dynamic": "scalar_dynamic.parquet",
-        "static": "scalar_static.parquet",
+        "name": root.name,
+        "created_at": "2026-01-01T00:00:00Z",
+        "producer_version": "hydrologeez-tests/0.0.0",
+        "crs": "EPSG:4326",
+        "cadence": "daily",
     }
     (root / "manifest.json").write_text(json.dumps(manifest))
 
@@ -91,5 +89,12 @@ def synth_streamflow_only_dataset(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def geometry_less_root() -> Path:
-    return GEOMETRY_LESS_ROOT
+def geometry_less_root(tmp_path: Path) -> Path:
+    return write_scalar_hdx(
+        tmp_path / "geometry-less",
+        basins={"0001": 3, "0002": 3, "0003": 3},
+        static_fields={"drainage_area": {"0001": 100.0, "0002": 250.0, "0003": 400.0}},
+        dynamic_fields={
+            "streamflow": {"0001": [1.0, 2.0, 3.0], "0002": [4.0, 5.0, 6.0], "0003": [7.0, 8.0, 9.0]},
+        },
+    )

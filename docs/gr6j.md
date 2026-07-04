@@ -1,10 +1,9 @@
 # GR6J
 
 GR6J is a six-parameter daily lumped rainfall-runoff model. hydrologeez implements
-it as a differentiable state-space model validated within ~1e-4 relative against the
-retired Rust `pydrology` oracle.
+it as a differentiable state-space model.
 
-## Parameters (code bounds, used for parity)
+## Parameters (code bounds)
 
 | Param | Meaning | Bounds |
 |-------|---------|--------|
@@ -15,8 +14,7 @@ retired Rust `pydrology` oracle.
 | `x5` | exchange threshold | `[-4, 4]` |
 | `x6` | exponential-store scale [mm] | `[1, 50]` |
 
-`x6` uses the code bounds `[1, 50]`, not the documented `[0.01, 20]`; this is
-chosen for oracle parity.
+`x6` uses the code bounds `[1, 50]`, not the documented `[0.01, 20]`.
 
 ## State and initialisation
 
@@ -25,7 +23,7 @@ negative), and the two unit-hydrograph delay-line buffers `uh1[20]`, `uh2[40]`
 (flat layout `[S, R, Exp, uh1, uh2]`, length 63). Initial state:
 `S = 0.3*x1`, `R = 0.5*x3`, `Exp = 0`, buffers zeroed.
 
-## Transition (per step), in oracle order
+## Transition (per step)
 
 1. **Production.** If `P < E`: `tanh`-based evaporation `Es`. If `P >= E`:
    `Ps = x1*(1 - (S/x1)^2) * TWS / (1 + (S/x1)*TWS)`, with `Pn = P - E`,
