@@ -79,12 +79,6 @@ streamflow = model.run(forcing)
 obs, fluxes, final = model.run(forcing, return_fluxes=True)
 ```
 
-## Runnable example (executed at docs build, validated against the oracle fixture)
-
-```python exec="true" source="material-block" title="gr6j_quickstart.py"
---8<-- "docs/examples/gr6j_quickstart.py"
-```
-
 ## API reference
 
 ::: hydrologeez.models.gr6j.model.GR6J
