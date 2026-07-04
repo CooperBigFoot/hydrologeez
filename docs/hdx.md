@@ -7,6 +7,14 @@ attributes live in the root `scalar_static.parquet`; dataset metadata lives in
 but the format does not decide whether a column is forcing, target, prediction, or
 model-specific metadata.
 
+**HDX is defined and validated in the canonical
+[`hdx` repository](https://github.com/CooperBigFoot/hdx)**; the normative
+contract is its
+[`spec/HDX_SPEC.md`](https://github.com/CooperBigFoot/hdx/blob/main/spec/HDX_SPEC.md).
+hydrologeez only implements I/O for the format. The spec's governing discipline:
+
+> **HDX describes the *shape* of data, never *what was done to it*.**
+
 hydrologeez owns that semantic layer through `Vocabulary`. By default, `precip`,
 `pet`, and `temp` are forcing fields and `streamflow` is the target field. Foreign
 datasets can be mapped into these canonical names with overrides:
@@ -16,6 +24,29 @@ from hydrologeez.hdx import Vocabulary
 
 vocabulary = Vocabulary({"P": "precip", "E": "pet", "Q": "streamflow"})
 ```
+
+## On-disk layout
+
+The basin-first directory tree, verbatim from the spec (section 4, "On-disk
+layout — basin-first hive"):
+
+```text
+<hdx-dataset>/
+  manifest.json                       # the floor (§11)
+  scalar_static.parquet               # dataset-level rollup; 1 row/basin; cols = basin_id + static scalar fields
+  outlines.geoparquet                 # dataset-level; rows = (basin_id, delineation, geometry)
+  basin=<id>/
+    scalar_dynamic.parquet            # rows = time (real `time` coord); cols = basin_id + dynamic scalar fields
+    gridded_static/<grid-label>.tif   # multiband COG; named bands = static gridded fields sharing this grid
+    gridded_dynamic/<grid-label>.zarr # Zarr v3; named CF variables = dynamic gridded fields sharing this grid
+  basin=<id>/ …
+```
+
+The `§11` comment refers to the manifest section of the linked spec. Under
+`format_version` `"0.2"`, `outlines.geoparquet` is optional: geometry-less
+datasets are conformant. hydrologeez reads and writes the scalar members:
+`manifest.json`, root `scalar_static.parquet`, and per-basin
+`basin=<id>/scalar_dynamic.parquet`.
 
 ## Optional install
 
