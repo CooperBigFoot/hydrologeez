@@ -40,7 +40,7 @@ class ParamSpec:
 # Canonical parameter order = the column order of the ctrl-freak population matrix.
 PARAM_NAMES: tuple[str, ...] = ("x1", "x2", "x3", "x4", "x5", "x6")
 
-# Code bounds (constants.rs:99-105); x6 uses code bounds [1, 50] for parity.
+# Code bounds; x6 uses [1, 50].
 LOWER_BOUNDS: tuple[float, ...] = (1.0, -5.0, 1.0, 0.5, -4.0, 1.0)
 UPPER_BOUNDS: tuple[float, ...] = (2500.0, 5.0, 1000.0, 10.0, 4.0, 50.0)
 
@@ -49,8 +49,7 @@ GR6J_SPEC: ParamSpec = ParamSpec(names=PARAM_NAMES, lower=LOWER_BOUNDS, upper=UP
 
 # --- HBV-Light single-zone (14 params, canonical order tt..maxbas) -----------
 # Names + bounds are the single source of truth in models/hbv/constants.py.
-# Only ``maxbas`` is hard-validated in the Rust oracle; the other 13 bounds are
-# advisory (calibration only).
+# Only ``maxbas`` is hard-validated; the other 13 bounds are advisory (calibration only).
 def _hbv_bounds() -> tuple[tuple[str, ...], tuple[float, ...], tuple[float, ...]]:
     names = tuple(str(n) for n in hbv_constants.PARAM_NAMES)
     pb = hbv_constants.PARAM_BOUNDS

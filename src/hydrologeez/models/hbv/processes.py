@@ -1,10 +1,7 @@
 """HBV-Light process free functions.
 
-Pure, differentiable JAX ports of the retired Rust pydrology HBV-Light oracle
-(crates/pydrology-core/src/hbv_light/{processes,routing}.rs and run.rs for the
-transition wiring). All branches use jnp.where for diff-cleanliness; every guard
-mirrors the Rust .min/.max/.clamp literals. All functions are jit-able with
-finite gradients on the fixture forcing.
+Pure, differentiable JAX implementations. All branches use jnp.where for
+diff-cleanliness; all functions are jit-able with finite gradients.
 """
 
 from __future__ import annotations

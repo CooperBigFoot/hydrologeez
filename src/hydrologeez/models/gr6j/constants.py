@@ -1,8 +1,7 @@
-"""GR6J numerical constants (mirror of the retired Rust pydrology oracle).
+"""GR6J numerical constants.
 
-Values are taken verbatim from
-crates/pydrology-core/src/gr6j/constants.rs. CODE bounds are used for
-parity (x6 is [1, 50]; the docs' [0.01, 20] is intentionally not used).
+CODE bounds are used (x6 is [1, 50]; the documented [0.01, 20] is
+intentionally not used).
 """
 
 # Routing split fractions
@@ -27,7 +26,7 @@ EXP_BRANCH_THRESHOLD: float = 7.0
 # Flat state layout: [S, R, Exp, uh1[20], uh2[40]]
 STATE_SIZE: int = 63
 
-# Parameter bounds (code bounds, used for parity)
+# Parameter bounds (code bounds)
 PARAM_NAMES: tuple[str, ...] = ("x1", "x2", "x3", "x4", "x5", "x6")
 PARAM_BOUNDS: dict[str, tuple[float, float]] = {
     "x1": (1.0, 2500.0),
