@@ -6,49 +6,51 @@ is bypassed (input_elevation=None -> zone_temp=temp, zone_precip=precip).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import torch
 
 from hydrologeez.models.hbv import constants, processes
 from hydrologeez.models.hbv.state import HBVState
 from hydrologeez.ssm import StateSpaceModel
 
 
-class HBVForcing(eqx.Module):
+@dataclass(frozen=True)
+class HBVForcing:
     """Per-step or per-series HBV forcing (3 leaves)."""
 
-    precip: jax.Array
-    pet: jax.Array
-    temp: jax.Array
+    precip: torch.Tensor
+    pet: torch.Tensor
+    temp: torch.Tensor
 
 
-class HBVFluxes(eqx.Module):
-    """All HBV internal fluxes for one step, stacked over time by scan.
+@dataclass(frozen=True)
+class HBVFluxes:
+    """All HBV internal fluxes for one step, in canonical 20-flux order."""
 
-    Field order is the canonical 20-flux order.
-    """
-
-    precip: jax.Array
-    temp: jax.Array
-    pet: jax.Array
-    precip_rain: jax.Array
-    precip_snow: jax.Array
-    snow_pack: jax.Array
-    snow_melt: jax.Array
-    liquid_water_in_snow: jax.Array
-    snow_input: jax.Array
-    soil_moisture: jax.Array
-    recharge: jax.Array
-    actual_et: jax.Array
-    upper_zone: jax.Array
-    lower_zone: jax.Array
-    q0: jax.Array
-    q1: jax.Array
-    q2: jax.Array
-    percolation: jax.Array
-    qgw: jax.Array
-    streamflow: jax.Array
+    precip: torch.Tensor
+    temp: torch.Tensor
+    pet: torch.Tensor
+    precip_rain: torch.Tensor
+    precip_snow: torch.Tensor
+    snow_pack: torch.Tensor
+    snow_melt: torch.Tensor
+    liquid_water_in_snow: torch.Tensor
+    snow_input: torch.Tensor
+    soil_moisture: torch.Tensor
+    recharge: torch.Tensor
+    actual_et: torch.Tensor
+    upper_zone: torch.Tensor
+    lower_zone: torch.Tensor
+    q0: torch.Tensor
+    q1: torch.Tensor
+    q2: torch.Tensor
+    percolation: torch.Tensor
+    qgw: torch.Tensor
+    streamflow: torch.Tensor
 
 
 class HBVModel(StateSpaceModel):
@@ -94,9 +96,9 @@ class HBVModel(StateSpaceModel):
         uh_weights = processes.compute_triangular_weights(self.maxbas)
 
         # --- Snow routine (reads start-of-step sp, lw) --- run.rs:195-203
-        p_rain, p_snow = processes.partition_precipitation(precip, temp, self.tt, self.sfcf)
-        melt = processes.compute_melt(temp, self.tt, self.cfmax, state.zone_sp)
-        refreeze = processes.compute_refreezing(temp, self.tt, self.cfmax, self.cfr, state.zone_lw)
+        p_rain, p_snow = processes.partition_precipitation(precip, temp, self.tt, self.sfcf)  # ty: ignore[invalid-argument-type]
+        melt = processes.compute_melt(temp, self.tt, self.cfmax, state.zone_sp)  # ty: ignore[invalid-argument-type]
+        refreeze = processes.compute_refreezing(temp, self.tt, self.cfmax, self.cfr, state.zone_lw)  # ty: ignore[invalid-argument-type]
         new_sp, new_lw, snow_outflow = processes.update_snow_pack(
             state.zone_sp, state.zone_lw, p_snow, melt, refreeze, self.cwh
         )
@@ -104,7 +106,7 @@ class HBVModel(StateSpaceModel):
 
         # --- Soil routine (recharge + ET + update all read start-of-step sm) --- Seibert & Vis (2012)
         recharge = processes.compute_recharge(snow_input, state.zone_sm, self.fc, self.beta)
-        et_act = processes.compute_actual_et(pet, state.zone_sm, self.fc, self.lp)
+        et_act = processes.compute_actual_et(pet, state.zone_sm, self.fc, self.lp)  # ty: ignore[invalid-argument-type]
         new_sm, sm_overflow = processes.update_soil_moisture(state.zone_sm, snow_input, recharge, et_act, self.fc)
         # Above-FC excess routes to upper-zone recharge (not discarded). The reported
         # recharge flux is the TOTAL soil->upper-zone flux (base recharge + overflow).
@@ -133,22 +135,22 @@ class HBVModel(StateSpaceModel):
             precip=precip,
             temp=temp,
             pet=pet,
-            precip_rain=p_rain,
-            precip_snow=p_snow,
-            snow_pack=new_sp,
-            snow_melt=melt,
-            liquid_water_in_snow=new_lw,
-            snow_input=snow_input,
-            soil_moisture=new_sm,
-            recharge=recharge_total,
-            actual_et=et_act,
-            upper_zone=new_suz,
-            lower_zone=new_slz,
-            q0=q0,
-            q1=q1,
-            q2=q2,
-            percolation=perc,
-            qgw=qgw,
-            streamflow=qsim,
+            precip_rain=p_rain,  # ty: ignore[invalid-argument-type]
+            precip_snow=p_snow,  # ty: ignore[invalid-argument-type]
+            snow_pack=new_sp,  # ty: ignore[invalid-argument-type]
+            snow_melt=melt,  # ty: ignore[invalid-argument-type]
+            liquid_water_in_snow=new_lw,  # ty: ignore[invalid-argument-type]
+            snow_input=snow_input,  # ty: ignore[invalid-argument-type]
+            soil_moisture=new_sm,  # ty: ignore[invalid-argument-type]
+            recharge=recharge_total,  # ty: ignore[invalid-argument-type]
+            actual_et=et_act,  # ty: ignore[invalid-argument-type]
+            upper_zone=new_suz,  # ty: ignore[invalid-argument-type]
+            lower_zone=new_slz,  # ty: ignore[invalid-argument-type]
+            q0=q0,  # ty: ignore[invalid-argument-type]
+            q1=q1,  # ty: ignore[invalid-argument-type]
+            q2=q2,  # ty: ignore[invalid-argument-type]
+            percolation=perc,  # ty: ignore[invalid-argument-type]
+            qgw=qgw,  # ty: ignore[invalid-argument-type]
+            streamflow=qsim,  # ty: ignore[invalid-argument-type]
         )
         return new_state, fluxes
