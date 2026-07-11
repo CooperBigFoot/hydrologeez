@@ -1,18 +1,15 @@
-"""Reference-parity and gradient-finiteness tests for hydrologeez.metrics.
+"""Reference parity and gradient tests for hydrologeez.metrics."""
 
-x64 is enabled by tests/conftest.py before any jax import; this module must not
-set JAX_ENABLE_X64 or call jax.config.update itself.
-"""
+from collections.abc import Callable
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 import pytest
+import torch
+from torch import Tensor
 
 from hydrologeez.metrics import LOG_EPS, kge, lognse, mae, nse, pbias, rmse
 
 
-# --- independent NumPy references (closed-form, ddof=0) ----------------------
 def _nse_np(obs: np.ndarray, sim: np.ndarray) -> float:
     return 1.0 - np.sum((sim - obs) ** 2) / np.sum((obs - obs.mean()) ** 2)
 
@@ -37,13 +34,20 @@ def _lognse_np(obs: np.ndarray, sim: np.ndarray, eps: float = LOG_EPS) -> float:
 
 def _kge_np(obs: np.ndarray, sim: np.ndarray) -> float:
     r = np.corrcoef(obs, sim)[0, 1]
-    alpha = np.std(sim) / np.std(obs)
+    alpha = np.std(sim, ddof=0) / np.std(obs, ddof=0)
     beta = np.mean(sim) / np.mean(obs)
     return 1.0 - np.sqrt((r - 1.0) ** 2 + (alpha - 1.0) ** 2 + (beta - 1.0) ** 2)
 
 
-_JAX_METRICS = {"nse": nse, "kge": kge, "lognse": lognse, "pbias": pbias, "rmse": rmse, "mae": mae}
-_NP_METRICS = {
+TORCH_METRICS: dict[str, Callable[[Tensor, Tensor], Tensor]] = {
+    "nse": nse,
+    "kge": kge,
+    "lognse": lognse,
+    "pbias": pbias,
+    "rmse": rmse,
+    "mae": mae,
+}
+NP_METRICS = {
     "nse": _nse_np,
     "kge": _kge_np,
     "lognse": _lognse_np,
@@ -51,6 +55,15 @@ _NP_METRICS = {
     "rmse": _rmse_np,
     "mae": _mae_np,
 }
+
+
+def _dtype_devices() -> list[tuple[torch.dtype, torch.device]]:
+    cases = [(torch.float32, torch.device("cpu")), (torch.float64, torch.device("cpu"))]
+    if torch.cuda.is_available():
+        cases.append((torch.float32, torch.device("cuda")))
+    if torch.backends.mps.is_available():
+        cases.append((torch.float32, torch.device("mps")))
+    return cases
 
 
 @pytest.fixture
@@ -61,34 +74,64 @@ def obs_sim() -> tuple[np.ndarray, np.ndarray]:
     return obs, sim
 
 
-@pytest.mark.parametrize("name", list(_JAX_METRICS))
+@pytest.mark.parametrize("name", list(TORCH_METRICS))
 def test_metric_matches_numpy_reference(name: str, obs_sim: tuple[np.ndarray, np.ndarray]) -> None:
     obs, sim = obs_sim
-    got = np.asarray(_JAX_METRICS[name](jnp.asarray(obs), jnp.asarray(sim)))
-    expected = _NP_METRICS[name](obs, sim)
-    np.testing.assert_allclose(got, expected, rtol=1e-9, atol=1e-12)
+    result = TORCH_METRICS[name](torch.tensor(obs), torch.tensor(sim))
+    expected = NP_METRICS[name](obs, sim)
+    np.testing.assert_allclose(result.detach().cpu().numpy(), expected, rtol=1e-9, atol=1e-12)
 
 
 def test_perfect_fit_identities(obs_sim: tuple[np.ndarray, np.ndarray]) -> None:
     obs, _ = obs_sim
-    x = jnp.asarray(obs)
-    np.testing.assert_allclose(np.asarray(nse(x, x)), 1.0, rtol=0, atol=1e-12)
-    np.testing.assert_allclose(np.asarray(kge(x, x)), 1.0, rtol=0, atol=1e-12)
-    np.testing.assert_allclose(np.asarray(lognse(x, x)), 1.0, rtol=0, atol=1e-12)
-    np.testing.assert_allclose(np.asarray(rmse(x, x)), 0.0, rtol=0, atol=1e-12)
-    np.testing.assert_allclose(np.asarray(mae(x, x)), 0.0, rtol=0, atol=1e-12)
-    np.testing.assert_allclose(np.asarray(pbias(x, x)), 0.0, rtol=0, atol=1e-12)
+    x = torch.tensor(obs, dtype=torch.float64)
+    expected = {"nse": 1.0, "kge": 1.0, "lognse": 1.0, "rmse": 0.0, "mae": 0.0, "pbias": 0.0}
+    for name, value in expected.items():
+        np.testing.assert_allclose(TORCH_METRICS[name](x, x).numpy(), value, rtol=0, atol=1e-12)
 
 
-@pytest.mark.parametrize("name", list(_JAX_METRICS))
-def test_gradient_finite_wrt_sim(name: str, obs_sim: tuple[np.ndarray, np.ndarray]) -> None:
-    obs, sim = obs_sim
-    grad = jax.grad(_JAX_METRICS[name], argnums=1)(jnp.asarray(obs), jnp.asarray(sim))
-    assert np.all(np.isfinite(np.asarray(grad)))
+@pytest.mark.parametrize("name", list(TORCH_METRICS))
+@pytest.mark.parametrize(("dtype", "device"), _dtype_devices(), ids=lambda value: str(value))
+def test_metric_preserves_dtype_device_and_is_differentiable(
+    name: str, dtype: torch.dtype, device: torch.device, obs_sim: tuple[np.ndarray, np.ndarray]
+) -> None:
+    obs_values, sim_values = obs_sim
+    obs = torch.tensor(obs_values, dtype=dtype, device=device)
+    sim = torch.tensor(sim_values, dtype=dtype, device=device, requires_grad=True)
+    result = TORCH_METRICS[name](obs, sim)
+    assert result.ndim == 0
+    assert result.dtype == dtype
+    assert result.device.type == device.type
+    result.backward()
+    assert sim.grad is not None
+    assert sim.grad.dtype == dtype
+    assert sim.grad.device.type == device.type
+    assert torch.all(torch.isfinite(sim.grad))
 
 
 def test_lognse_gradient_finite_at_zero_and_small_flows() -> None:
-    obs = jnp.asarray([0.0, 0.0, 1e-8, 0.5, 2.0, 10.0, 0.01, 25.0])
-    sim = jnp.asarray([0.0, 1e-9, 0.0, 0.4, 2.3, 9.0, 0.0, 27.0])
-    grad = jax.grad(lognse, argnums=1)(obs, sim)
-    assert np.all(np.isfinite(np.asarray(grad)))
+    obs = torch.tensor([0.0, 0.0, 1e-8, 0.5, 2.0, 10.0, 0.01, 25.0], dtype=torch.float64)
+    sim = torch.tensor([0.0, 1e-9, 0.0, 0.4, 2.3, 9.0, 0.0, 27.0], dtype=torch.float64, requires_grad=True)
+    lognse(obs, sim).backward()
+    assert sim.grad is not None
+    assert torch.all(torch.isfinite(sim.grad))
+
+
+def test_pbias_argument_order() -> None:
+    obs_values = np.array([1.0, 2.0, 4.0])
+    sim_values = np.array([2.0, 3.0, 8.0])
+    obs = torch.tensor(obs_values, dtype=torch.float64)
+    sim = torch.tensor(sim_values, dtype=torch.float64)
+    result = pbias(obs, sim)
+    reverse = pbias(sim, obs)
+    np.testing.assert_allclose(result.numpy(), _pbias_np(obs_values, sim_values), rtol=1e-9, atol=1e-12)
+    assert not torch.isclose(result, reverse)
+
+
+@pytest.mark.parametrize("metric", list(TORCH_METRICS.values()))
+def test_metric_returns_scalar_tensor(metric: Callable[[Tensor, Tensor], Tensor]) -> None:
+    obs = torch.tensor([1.0, 2.0, 4.0], dtype=torch.float64)
+    sim = torch.tensor([1.2, 1.8, 4.5], dtype=torch.float64)
+    result = metric(obs, sim)
+    assert isinstance(result, Tensor)
+    assert result.ndim == 0

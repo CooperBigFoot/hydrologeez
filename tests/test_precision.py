@@ -1,50 +1,108 @@
-"""Tests for the import-time float64 enforcement and the conftest x64 seam."""
+"""Tests for explicit tensor dtype and device policies."""
 
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-import jax
+import numpy as np
+import pytest
+import torch
+
+import hydrologeez
+from hydrologeez.precision import (
+    REFERENCE_DEVICE,
+    REFERENCE_DTYPE,
+    TRAINING_DTYPE,
+    enforce_float64,
+    reference_defaults,
+    reference_tensor,
+    training_defaults,
+    training_tensor,
+)
 
 SRC = str(Path(__file__).resolve().parents[1] / "src")
 
 
-def _import_hydrologeez_subprocess(x64_value: str | None) -> subprocess.CompletedProcess:
-    """Import hydrologeez in a FRESH python process with a controlled env.
+def _available_devices() -> list[torch.device]:
+    devices = [torch.device("cpu")]
+    if torch.cuda.is_available():
+        devices.append(torch.device("cuda"))
+    if torch.backends.mps.is_available():
+        devices.append(torch.device("mps"))
+    return devices
 
-    ``x64_value=None`` => JAX_ENABLE_X64 is unset; otherwise it is set to the
-    given string. The parent's JAX_ENABLE_X64 (set by conftest) is stripped so
-    this never leaks into the child.
-    """
-    env = {k: v for k, v in os.environ.items() if k != "JAX_ENABLE_X64"}
+
+def test_import_succeeds_when_jax_x64_disabled() -> None:
+    env = os.environ.copy()
+    env["JAX_ENABLE_X64"] = "0"
     env["PYTHONPATH"] = SRC + os.pathsep + env.get("PYTHONPATH", "")
-    if x64_value is not None:
-        env["JAX_ENABLE_X64"] = x64_value
-    return subprocess.run(
+    result = subprocess.run(
         [sys.executable, "-c", "import hydrologeez"],
         capture_output=True,
         text=True,
         env=env,
     )
-
-
-def test_import_raises_when_x64_disabled():
-    """With x64 OFF, importing hydrologeez RAISES (proving no silent flip)."""
-    result = _import_hydrologeez_subprocess(None)
-    assert result.returncode != 0
-    assert "JAX_ENABLE_X64=1" in result.stderr
-
-
-def test_import_succeeds_when_x64_enabled():
-    """A second fresh process with JAX_ENABLE_X64=1 imports successfully."""
-    result = _import_hydrologeez_subprocess("1")
     assert result.returncode == 0, result.stderr
 
 
-def test_inprocess_x64_enabled_by_conftest():
-    """The in-process suite has x64 ON via the conftest seam alone.
+def test_reference_defaults_are_explicit_fresh_and_local() -> None:
+    before = torch.get_default_dtype()
+    first = reference_defaults()
+    second = reference_defaults()
+    assert first == {"dtype": torch.float64, "device": torch.device("cpu")}
+    assert first is not second
+    assert torch.get_default_dtype() == before
 
-    No test module called jax.config.update; the env-var seam did it.
-    """
-    assert jax.config.jax_enable_x64 is True  # ty: ignore[unresolved-attribute]
+
+@pytest.mark.parametrize(
+    "data",
+    [np.array([1.25, 2.5], dtype=np.float32), torch.tensor([1.25, 2.5], dtype=torch.float32)],
+)
+def test_reference_tensor_converts_to_cpu_float64(data: object) -> None:
+    before = torch.get_default_dtype()
+    result = reference_tensor(data)
+    assert result.dtype == torch.float64
+    assert result.device == torch.device("cpu")
+    torch.testing.assert_close(result, torch.tensor([1.25, 2.5], dtype=torch.float64))
+    assert torch.get_default_dtype() == before
+
+
+def test_reference_tensor_preserves_autograd_connectivity() -> None:
+    before = torch.get_default_dtype()
+    source = torch.tensor([1.0, 2.0], dtype=torch.float32, requires_grad=True)
+    reference_tensor(source).sum().backward()
+    assert source.grad is not None
+    torch.testing.assert_close(source.grad, torch.ones_like(source))
+    assert torch.get_default_dtype() == before
+
+
+@pytest.mark.parametrize("device", _available_devices(), ids=str)
+def test_training_helpers_use_requested_device_without_global_mutation(device: torch.device) -> None:
+    before = torch.get_default_dtype()
+    first = training_defaults(device)
+    second = training_defaults(str(device))
+    assert first == {"dtype": torch.float32, "device": device}
+    assert first is not second
+    result = training_tensor(np.array([1.25, 2.5], dtype=np.float64), device=device)
+    assert result.dtype == torch.float32
+    assert result.device.type == device.type
+    torch.testing.assert_close(result.cpu(), torch.tensor([1.25, 2.5], dtype=torch.float32))
+    assert torch.get_default_dtype() == before
+
+
+def test_legacy_enforce_float64_is_deprecated_noop() -> None:
+    before = torch.get_default_dtype()
+    with pytest.warns(DeprecationWarning, match="retired"):
+        assert enforce_float64() is None
+    assert torch.get_default_dtype() == before
+
+
+def test_package_root_policy_exports_match_precision_module() -> None:
+    assert hydrologeez.REFERENCE_DEVICE is REFERENCE_DEVICE
+    assert hydrologeez.REFERENCE_DTYPE is REFERENCE_DTYPE
+    assert hydrologeez.TRAINING_DTYPE is TRAINING_DTYPE
+    assert hydrologeez.reference_defaults is reference_defaults
+    assert hydrologeez.reference_tensor is reference_tensor
+    assert hydrologeez.training_defaults is training_defaults
+    assert hydrologeez.training_tensor is training_tensor
