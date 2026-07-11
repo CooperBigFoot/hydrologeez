@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import torch
 
 from hydrologeez.models.gr6j import constants, processes
 from hydrologeez.models.gr6j.state import State
@@ -14,36 +17,38 @@ B = constants.B
 C = constants.C
 
 
-class GR6JForcing(eqx.Module):
+@dataclass(frozen=True)
+class GR6JForcing:
     """Per-step or per-series GR6J forcing."""
 
-    precip: jax.Array
-    pet: jax.Array
+    precip: torch.Tensor
+    pet: torch.Tensor
 
 
-class GR6JFluxes(eqx.Module):
-    """All GR6J internal fluxes for one step, stacked over time by scan."""
+@dataclass(frozen=True)
+class GR6JFluxes:
+    """All GR6J internal fluxes for one step, stacked over time by the SSM."""
 
-    pet: jax.Array
-    precip: jax.Array
-    production_store: jax.Array
-    net_rainfall: jax.Array
-    storage_infiltration: jax.Array
-    actual_et: jax.Array
-    percolation: jax.Array
-    effective_rainfall: jax.Array
-    q9: jax.Array
-    q1: jax.Array
-    routing_store: jax.Array
-    exchange: jax.Array
-    actual_exchange_routing: jax.Array
-    actual_exchange_direct: jax.Array
-    actual_exchange_total: jax.Array
-    qr: jax.Array
-    qrexp: jax.Array
-    exponential_store: jax.Array
-    qd: jax.Array
-    streamflow: jax.Array
+    pet: torch.Tensor
+    precip: torch.Tensor
+    production_store: torch.Tensor
+    net_rainfall: torch.Tensor
+    storage_infiltration: torch.Tensor
+    actual_et: torch.Tensor
+    percolation: torch.Tensor
+    effective_rainfall: torch.Tensor
+    q9: torch.Tensor
+    q1: torch.Tensor
+    routing_store: torch.Tensor
+    exchange: torch.Tensor
+    actual_exchange_routing: torch.Tensor
+    actual_exchange_direct: torch.Tensor
+    actual_exchange_total: torch.Tensor
+    qr: torch.Tensor
+    qrexp: torch.Tensor
+    exponential_store: torch.Tensor
+    qd: torch.Tensor
+    streamflow: torch.Tensor
 
 
 class GR6J(StateSpaceModel):
@@ -73,7 +78,10 @@ class GR6J(StateSpaceModel):
         uh1_ord, uh2_ord = processes.compute_uh_ordinates(self.x4)
 
         s_after_ps, actual_et, net_rainfall_pn, effective_rainfall_pr = processes.production_store_update(
-            precip, pet, state.production_store, self.x1
+            precip,  # ty: ignore[invalid-argument-type]
+            pet,  # ty: ignore[invalid-argument-type]
+            state.production_store,
+            self.x1,
         )
         storage_infiltration = net_rainfall_pn - effective_rainfall_pr
 
@@ -104,23 +112,23 @@ class GR6J(StateSpaceModel):
         fluxes = GR6JFluxes(
             pet=pet,
             precip=precip,
-            production_store=s_after_perc,
-            net_rainfall=net_rainfall_pn,
-            storage_infiltration=storage_infiltration,
-            actual_et=actual_et,
-            percolation=percolation_amount,
-            effective_rainfall=total_effective_rainfall,
-            q9=q9,
-            q1=q1,
-            routing_store=new_routing_store,
-            exchange=exchange_f,
-            actual_exchange_routing=actual_exchange_routing,
-            actual_exchange_direct=actual_exchange_direct,
-            actual_exchange_total=actual_exchange_total,
-            qr=qr,
-            qrexp=qrexp,
-            exponential_store=new_exp_store,
-            qd=qd,
-            streamflow=streamflow,
+            production_store=s_after_perc,  # ty: ignore[invalid-argument-type]
+            net_rainfall=net_rainfall_pn,  # ty: ignore[invalid-argument-type]
+            storage_infiltration=storage_infiltration,  # ty: ignore[invalid-argument-type]
+            actual_et=actual_et,  # ty: ignore[invalid-argument-type]
+            percolation=percolation_amount,  # ty: ignore[invalid-argument-type]
+            effective_rainfall=total_effective_rainfall,  # ty: ignore[invalid-argument-type]
+            q9=q9,  # ty: ignore[invalid-argument-type]
+            q1=q1,  # ty: ignore[invalid-argument-type]
+            routing_store=new_routing_store,  # ty: ignore[invalid-argument-type]
+            exchange=exchange_f,  # ty: ignore[invalid-argument-type]
+            actual_exchange_routing=actual_exchange_routing,  # ty: ignore[invalid-argument-type]
+            actual_exchange_direct=actual_exchange_direct,  # ty: ignore[invalid-argument-type]
+            actual_exchange_total=actual_exchange_total,  # ty: ignore[invalid-argument-type]
+            qr=qr,  # ty: ignore[invalid-argument-type]
+            qrexp=qrexp,  # ty: ignore[invalid-argument-type]
+            exponential_store=new_exp_store,  # ty: ignore[invalid-argument-type]
+            qd=qd,  # ty: ignore[invalid-argument-type]
+            streamflow=streamflow,  # ty: ignore[invalid-argument-type]
         )
         return new_state, fluxes
