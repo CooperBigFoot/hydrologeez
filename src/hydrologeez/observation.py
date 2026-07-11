@@ -11,17 +11,19 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-# Documentation-level aliases: state/fluxes/observable are model-defined PyTrees.
+import torch
+
+# Documentation-level aliases: state and fluxes are model-defined tensor containers.
 State = Any
 Fluxes = Any
-Observable = Any
-ObservationOperator = Callable[[State, Fluxes], Observable]
+Observable = torch.Tensor
+ObservationOperator = Callable[[State, Fluxes], torch.Tensor]
 
 
 def default_streamflow_observation(state: State, fluxes: Fluxes) -> Observable:
     """Canonical default observation operator: return the ``streamflow`` flux.
 
-    The ``fluxes`` PyTree must expose a ``streamflow`` attribute. The GR6J fluxes
+    The ``fluxes`` container must expose a ``streamflow`` attribute. The GR6J fluxes
     type (added in a later step) and the linear-reservoir test dummy both satisfy
     this contract.
     """
