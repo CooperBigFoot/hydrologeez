@@ -36,6 +36,7 @@ dependencies = [
     "equinox>=0.13.8",
     "jax>=0.10.2",
     "optax>=0.2.8",
+    "torch>=2.12.1",
 ]
 
 [project.urls]
