@@ -1,4 +1,4 @@
-"""GR6J: process free functions, constants, and the State PyTree."""
+"""GR6J: process free functions, constants, and the state container."""
 
 from . import constants
 from .processes import (
