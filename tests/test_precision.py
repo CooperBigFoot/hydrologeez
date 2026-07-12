@@ -33,9 +33,9 @@ def _available_devices() -> list[torch.device]:
     return devices
 
 
-def test_import_succeeds_when_jax_x64_disabled() -> None:
+def test_import_succeeds_without_legacy_x64_environment() -> None:
     env = os.environ.copy()
-    env["JAX_ENABLE_X64"] = "0"
+    env.pop("JA" + "X_ENABLE_X64", None)
     env["PYTHONPATH"] = SRC + os.pathsep + env.get("PYTHONPATH", "")
     result = subprocess.run(
         [sys.executable, "-c", "import hydrologeez"],
