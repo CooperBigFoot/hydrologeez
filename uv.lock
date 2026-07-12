@@ -468,6 +468,16 @@ wheels = [
 ]
 
 [[package]]
+name = "hcx"
+version = "0.1.8"
+source = { git = "https://github.com/CooperBigFoot/hcx?rev=b1ecf5f#b1ecf5f79df5e0c5fa868f817ea9193549b41ef8" }
+dependencies = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "torch" },
+]
+
+[[package]]
 name = "httpcore"
 version = "1.0.9"
 source = { registry = "https://pypi.org/simple" }
@@ -519,6 +529,7 @@ hdx = [
 [package.dev-dependencies]
 dev = [
     { name = "bump-my-version" },
+    { name = "hcx" },
     { name = "polars" },
     { name = "pyarrow" },
     { name = "pytest" },
@@ -548,6 +559,7 @@ provides-extras = ["cuda", "hdx"]
 [package.metadata.requires-dev]
 dev = [
     { name = "bump-my-version", specifier = ">=1.2.7" },
+    { name = "hcx", git = "https://github.com/CooperBigFoot/hcx?rev=b1ecf5f" },
     { name = "polars", specifier = ">=1.42.1" },
     { name = "pyarrow", specifier = ">=24.0.0" },
     { name = "pytest", specifier = ">=8.3" },
