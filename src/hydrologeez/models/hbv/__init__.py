@@ -1,4 +1,4 @@
-"""HBV-Light: process free functions, constants, and the State PyTree."""
+"""HBV-Light torch model, state, process functions, and constants."""
 
 from . import constants
 from .processes import (

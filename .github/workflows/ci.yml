@@ -15,14 +15,12 @@ concurrency:
 
 jobs:
   test:
-    name: lint + type + test (py${{ matrix.python-version }}, x64)
+    name: lint + type + test (py${{ matrix.python-version }}, torch dtype policy)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
-    env:
-      JAX_ENABLE_X64: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4

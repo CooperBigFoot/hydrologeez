@@ -2,14 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 import numpy.testing as npt
+import torch
 
 from hydrologeez.hdx.loader import from_hdx
 from hydrologeez.hdx.writer import to_hdx
-from hydrologeez.models.gr6j import GR6J, GR6JForcing
 
 
 def test_public_hdx_imports_work() -> None:
@@ -23,68 +21,67 @@ def test_single_basin_prediction_round_trips(tmp_path: Path) -> None:
     streamflow = _single_streamflow()
     times = _times(len(streamflow))
     root = tmp_path / "single"
+    static = np.array(123.0)
 
-    to_hdx(root, streamflow, times, ["0001"], statics={"drainage_area": np.array(123.0)})
+    to_hdx(root, streamflow, times, ["0001"], statics={"drainage_area": static})
     data = from_hdx(root, forcing_type=None)
 
     assert data.forcing is None
-    assert data.streamflow is not None
+    assert isinstance(data.streamflow, np.ndarray)
+    assert data.streamflow.dtype == np.float64
+    assert isinstance(data.statics["drainage_area"], np.ndarray)
+    assert data.statics["drainage_area"].dtype == np.float64
     npt.assert_allclose(data.streamflow, streamflow)
+    npt.assert_allclose(data.statics["drainage_area"], static)
     assert data.basin_ids == ("0001",)
     assert isinstance(data.times, np.ndarray)
     npt.assert_array_equal(data.times, times)
-    npt.assert_allclose(data.statics["drainage_area"], np.array(123.0))
+
+    converted = data.torch(dtype=torch.float64, device="cpu")
+    assert converted.forcing is None
+    assert converted.mask is None
+    torch.testing.assert_close(converted.streamflow, torch.as_tensor(streamflow))
+    torch.testing.assert_close(converted.statics["drainage_area"], torch.as_tensor(static))
+    assert converted.times is data.times
 
 
 def test_batched_prediction_round_trips(tmp_path: Path) -> None:
     streamflow = _batched_streamflow()
     times = [_times(streamflow.shape[1]), _times(streamflow.shape[1])]
     root = tmp_path / "batched"
+    statics = np.array([100.0, 250.0])
 
-    to_hdx(
-        root,
-        streamflow,
-        times,
-        ["0001", "0002"],
-        statics={"drainage_area": np.array([100.0, 250.0])},
-    )
+    to_hdx(root, streamflow, times, ["0001", "0002"], statics={"drainage_area": statics})
     data = from_hdx(root, forcing_type=None)
 
     assert data.forcing is None
-    assert data.streamflow is not None
+    assert isinstance(data.streamflow, np.ndarray)
+    assert data.streamflow.dtype == np.float64
+    assert isinstance(data.statics["drainage_area"], np.ndarray)
+    assert data.statics["drainage_area"].dtype == np.float64
     npt.assert_allclose(data.streamflow, streamflow)
+    npt.assert_allclose(data.statics["drainage_area"], statics)
     assert data.basin_ids == ("0001", "0002")
     assert isinstance(data.times, tuple)
     npt.assert_array_equal(data.times[0], times[0])
     npt.assert_array_equal(data.times[1], times[1])
-    npt.assert_allclose(data.statics["drainage_area"], np.array([100.0, 250.0]))
 
-
-def _model() -> GR6J:
-    return GR6J(
-        x1=jnp.asarray(300.0, dtype=jnp.float64),
-        x2=jnp.asarray(1.0, dtype=jnp.float64),
-        x3=jnp.asarray(120.0, dtype=jnp.float64),
-        x4=jnp.asarray(2.5, dtype=jnp.float64),
-        x5=jnp.asarray(0.5, dtype=jnp.float64),
-        x6=jnp.asarray(20.0, dtype=jnp.float64),
-    )
-
-
-def _forcing() -> GR6JForcing:
-    precip = jnp.asarray(np.linspace(2.0, 12.0, 20), dtype=jnp.float64)
-    pet = jnp.asarray(np.linspace(0.5, 3.0, 20), dtype=jnp.float64)
-    return GR6JForcing(precip=precip, pet=pet)
+    converted = data.torch(dtype=torch.float64, device="cpu")
+    assert converted.forcing is None
+    torch.testing.assert_close(converted.streamflow, torch.as_tensor(streamflow))
+    torch.testing.assert_close(converted.statics["drainage_area"], torch.as_tensor(statics))
+    assert converted.mask is not None
+    assert converted.mask.dtype == torch.bool
+    torch.testing.assert_close(converted.mask, torch.ones_like(converted.mask, dtype=torch.bool))
+    assert converted.times is data.times
 
 
 def _single_streamflow() -> np.ndarray:
-    return np.asarray(_model().run(_forcing()), dtype=np.float64)
+    return np.random.default_rng(20260711).random(20, dtype=np.float64)
 
 
 def _batched_streamflow() -> np.ndarray:
-    forcing = _forcing()
-    batched_forcing = jax.tree_util.tree_map(lambda value: jnp.stack([value, value * 1.1]), forcing)
-    return np.asarray(_model().batch_run(batched_forcing), dtype=np.float64)
+    return np.random.default_rng(20260712).random((2, 20), dtype=np.float64)
 
 
 def _times(length: int) -> np.ndarray:

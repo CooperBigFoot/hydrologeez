@@ -30,8 +30,9 @@ only; the model runs them silently out of range.
 
 ## State and initialisation
 
-Single-zone state is 12 values, flat layout
-`[SP, LW, SM, SUZ, SLZ, b0..b6]`:
+Single-zone state has `[B]` stores and a `[B,7]` routing buffer. Its per-basin
+flat layout has 12 values, `[SP, LW, SM, SUZ, SLZ, b0..b6]`; time-stacked state
+and flux leaves are `[B,T]`:
 
 - `SP` snow pack [mm], `LW` liquid water held in snow (a.k.a. WC) [mm],
   `SM` soil moisture [mm].
@@ -82,16 +83,14 @@ this order — **all branches within a phase read the same start-of-step store
 
 ## MAXBAS routing — the masked-kernel crux
 
-The routing is a triangular unit hydrograph of base length `maxbas`. Its length is
-a function of a continuous parameter, which would be a non-static array shape under
-`jit`/`vmap`. As with the GR6J UH, hydrologeez resolves this with a **fixed
+The routing is a triangular unit hydrograph of base length `maxbas`. A **fixed
 length-7 masked kernel** (`ROUTING_BUFFER_SIZE = 7`, the declared `maxbas` upper
-bound):
+bound) preserves the routing semantics and batched tensor shape:
 
 - Bin `i` integrates the triangle density over `[i, min(i+1, maxbas)]`. Bins with
-  `i >= maxbas` collapse to zero — that is the mask. `jnp.where`/clamp idioms
-  replace branching `if`/`continue` logic so the kernel is a smooth function of
-  `maxbas` and `jax.grad` w.r.t. `maxbas` is finite.
+  `i >= maxbas` collapse to zero — that is the mask. Tensor selection and clamp
+  operations let Torch autograd differentiate the kernel with respect to
+  `maxbas`.
 - **Normalize-by-sum is load-bearing:** the raw per-bin weights integrate to 0.5,
   not 1.0, so the kernel is explicitly divided by its sum (`w / sum(w)` when
   `sum > 0`). Skipping this halves the routed flow.
@@ -141,30 +140,40 @@ These behaviours are retained by decision and reproduced verbatim:
 ## Usage
 
 ```python
-import os
-os.environ["JAX_ENABLE_X64"] = "1"
+import torch
 
-import jax.numpy as jnp  # noqa: E402
-from hydrologeez.models.hbv import HBVModel, HBVForcing  # noqa: E402
+from hydrologeez.models.hbv import HBVForcing, HBVModel
 
+dtype = torch.float64
 model = HBVModel(
-    tt=jnp.asarray(0.0), cfmax=jnp.asarray(3.5), sfcf=jnp.asarray(1.0),
-    cwh=jnp.asarray(0.1), cfr=jnp.asarray(0.05), fc=jnp.asarray(250.0),
-    lp=jnp.asarray(0.7), beta=jnp.asarray(2.0), k0=jnp.asarray(0.3),
-    k1=jnp.asarray(0.1), k2=jnp.asarray(0.05), perc=jnp.asarray(2.0),
-    uzl=jnp.asarray(20.0), maxbas=jnp.asarray(3.0),
+    tt=torch.tensor(0.0, dtype=dtype),
+    cfmax=torch.tensor(3.5, dtype=dtype),
+    sfcf=torch.tensor(1.0, dtype=dtype),
+    cwh=torch.tensor(0.1, dtype=dtype),
+    cfr=torch.tensor(0.05, dtype=dtype),
+    fc=torch.tensor(250.0, dtype=dtype),
+    lp=torch.tensor(0.7, dtype=dtype),
+    beta=torch.tensor(2.0, dtype=dtype),
+    k0=torch.tensor(0.3, dtype=dtype),
+    k1=torch.tensor(0.1, dtype=dtype),
+    k2=torch.tensor(0.05, dtype=dtype),
+    perc=torch.tensor(2.0, dtype=dtype),
+    uzl=torch.tensor(20.0, dtype=dtype),
+    maxbas=torch.tensor(3.0, dtype=dtype),
 )
 forcing = HBVForcing(
-    precip=jnp.asarray(precip_series),
-    pet=jnp.asarray(pet_series),
-    temp=jnp.asarray(temp_series),
+    precip=torch.tensor([[0.0, 4.0, 8.0, 2.0]], dtype=dtype),
+    pet=torch.tensor([[1.0, 1.1, 0.9, 1.0]], dtype=dtype),
+    temp=torch.tensor([[-2.0, 1.0, 3.0, 0.0]], dtype=dtype),
 )
+
 streamflow = model.run(forcing)
-obs, fluxes, final = model.run(forcing, return_fluxes=True)
+streamflow, fluxes, final_state = model.run(forcing, return_fluxes=True)
 ```
 
-float64 is required and enforced at import — set `JAX_ENABLE_X64=1` **before**
-importing jax or hydrologeez (the package raises rather than silently flipping it).
+Use float64 on CPU for references and reproduction, and float32 on an explicitly
+selected accelerator for training. Model execution preserves caller dtype and
+device and does not mutate Torch global defaults.
 
 ## API reference
 

@@ -7,9 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import jax
-import jax.numpy as jnp
 import numpy as np
+import torch
 
 from hydrologeez.hdx._polars import require_polars
 from hydrologeez.hdx.vocabulary import Vocabulary
@@ -19,6 +18,10 @@ from hydrologeez.models.hbv import HBVForcing
 if TYPE_CHECKING:
     import polars as pl
 
+ForcingType = type[GR6JForcing] | type[HBVForcing]
+_TorchDtype = torch.dtype
+_TorchDevice = torch.device
+
 _REQUIRED_FORCING_FIELDS = {
     GR6JForcing: ("precip", "pet"),
     HBVForcing: ("precip", "pet", "temp"),
@@ -26,29 +29,70 @@ _REQUIRED_FORCING_FIELDS = {
 
 
 @dataclass(frozen=True)
-class HDXData:
-    """Array-native bundle loaded from an HDX scalar dataset.
-
-    Shapes: SINGLE basin (dataset has exactly 1 basin) -> leaves are [T];
-    MULTI basin (N>1) -> leaves are [B, T] padded to the max length with 0.0,
-    with `mask` [B, T] (True = real record). `times` is per-basin (ragged, NOT
-    padded): a 1-D numpy datetime64[us] array [T] for single basin, or a tuple
-    of such arrays for multi-basin. `statics` maps each static field name to a
-    [B] float64 array (basin-aligned) for multi, or a scalar [] array for single.
-    """
-
+class TorchHDXData:
     forcing: GR6JForcing | HBVForcing | None
-    streamflow: jax.Array | None
-    statics: dict[str, jax.Array]
+    streamflow: torch.Tensor | None
+    statics: dict[str, torch.Tensor]
     basin_ids: tuple[str, ...]
     times: np.ndarray | tuple[np.ndarray, ...]
-    mask: jax.Array | None
+    mask: torch.Tensor | None
+
+
+@dataclass(frozen=True)
+class HDXData:
+    forcing: dict[str, np.ndarray] | None
+    streamflow: np.ndarray | None
+    statics: dict[str, np.ndarray]
+    basin_ids: tuple[str, ...]
+    times: np.ndarray | tuple[np.ndarray, ...]
+    mask: np.ndarray | None
+    _forcing_type: ForcingType | None
+
+    def torch(
+        self,
+        *,
+        dtype: _TorchDtype,
+        device: _TorchDevice | str,
+    ) -> TorchHDXData:
+        if self.forcing is None:
+            forcing = None
+        elif self._forcing_type is GR6JForcing:
+            forcing = GR6JForcing(
+                precip=_as_torch(self.forcing["precip"], dtype=dtype, device=device),
+                pet=_as_torch(self.forcing["pet"], dtype=dtype, device=device),
+            )
+        elif self._forcing_type is HBVForcing:
+            forcing = HBVForcing(
+                precip=_as_torch(self.forcing["precip"], dtype=dtype, device=device),
+                pet=_as_torch(self.forcing["pet"], dtype=dtype, device=device),
+                temp=_as_torch(self.forcing["temp"], dtype=dtype, device=device),
+            )
+        else:
+            raise ValueError(f"Unsupported forcing_type: {self._forcing_type!r}")
+
+        return TorchHDXData(
+            forcing=forcing,
+            streamflow=(None if self.streamflow is None else _as_torch(self.streamflow, dtype=dtype, device=device)),
+            statics={name: _as_torch(value, dtype=dtype, device=device) for name, value in self.statics.items()},
+            basin_ids=self.basin_ids,
+            times=self.times,
+            mask=None if self.mask is None else torch.as_tensor(self.mask, dtype=torch.bool, device=device),
+        )
+
+
+def _as_torch(
+    value: np.ndarray,
+    *,
+    dtype: torch.dtype,
+    device: torch.device | str,
+) -> torch.Tensor:
+    return torch.as_tensor(value, dtype=dtype, device=device)
 
 
 def from_hdx(
     root,
     *,
-    forcing_type: type[GR6JForcing] | type[HBVForcing] | None = None,
+    forcing_type: ForcingType | None = None,
     vocabulary: Vocabulary | None = None,
     validate: bool = False,
 ) -> HDXData:
@@ -88,6 +132,7 @@ def from_hdx(
         basin_ids=basin_ids,
         times=times,
         mask=mask,
+        _forcing_type=forcing_type,
     )
 
 
@@ -97,16 +142,13 @@ def _validate_with_hdx_binary(root: Path) -> None:
     subprocess.run(["hdx", "validate", str(root)], check=True)
 
 
-def _load_statics(static_df: pl.DataFrame, basin_count: int) -> dict[str, jax.Array]:
-    statics: dict[str, jax.Array] = {}
+def _load_statics(static_df: pl.DataFrame, basin_count: int) -> dict[str, np.ndarray]:
+    statics: dict[str, np.ndarray] = {}
     for column in static_df.columns:
         if column == "basin_id":
             continue
         values = np.asarray(static_df[column].to_numpy(), dtype=np.float64)
-        if basin_count == 1:
-            statics[column] = jnp.asarray(values[0], dtype=jnp.float64)
-        else:
-            statics[column] = jnp.asarray(values, dtype=jnp.float64)
+        statics[column] = np.asarray(values[0], dtype=np.float64) if basin_count == 1 else values
     return statics
 
 
@@ -123,27 +165,25 @@ def _load_dynamic_fields(dynamic_df: pl.DataFrame, vocabulary: Vocabulary) -> di
     return fields
 
 
-def _build_field_array(per_basin_fields: list[dict[str, np.ndarray]], field_name: str) -> jax.Array | None:
+def _build_field_array(per_basin_fields: list[dict[str, np.ndarray]], field_name: str) -> np.ndarray | None:
     if not all(field_name in fields for fields in per_basin_fields):
         return None
     values = [fields[field_name] for fields in per_basin_fields]
-    if len(values) == 1:
-        return jnp.asarray(values[0], dtype=jnp.float64)
-    return jnp.asarray(_pad(values), dtype=jnp.float64)
+    return values[0] if len(values) == 1 else _pad(values)
 
 
-def _build_mask(lengths: list[int]) -> jax.Array:
+def _build_mask(lengths: list[int]) -> np.ndarray:
     max_length = max(lengths, default=0)
     mask = np.zeros((len(lengths), max_length), dtype=np.bool_)
     for basin_index, length in enumerate(lengths):
         mask[basin_index, :length] = True
-    return jnp.asarray(mask)
+    return mask
 
 
 def _build_forcing(
-    forcing_type: type[GR6JForcing] | type[HBVForcing] | None,
+    forcing_type: ForcingType | None,
     per_basin_fields: list[dict[str, np.ndarray]],
-) -> GR6JForcing | HBVForcing | None:
+) -> dict[str, np.ndarray] | None:
     if forcing_type is None:
         return None
     if forcing_type is GR6JForcing:
@@ -153,7 +193,7 @@ def _build_forcing(
         pet = _build_field_array(per_basin_fields, "pet")
         assert precip is not None
         assert pet is not None
-        return GR6JForcing(precip=precip, pet=pet)
+        return {"precip": precip, "pet": pet}
     if forcing_type is HBVForcing:
         if not _has_required_fields(per_basin_fields, _REQUIRED_FORCING_FIELDS[HBVForcing]):
             return None
@@ -163,7 +203,7 @@ def _build_forcing(
         assert precip is not None
         assert pet is not None
         assert temp is not None
-        return HBVForcing(precip=precip, pet=pet, temp=temp)
+        return {"precip": precip, "pet": pet, "temp": temp}
     raise ValueError(f"Unsupported forcing_type: {forcing_type!r}")
 
 

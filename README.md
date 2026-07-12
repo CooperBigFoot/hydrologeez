@@ -1,17 +1,12 @@
 # hydrologeez
 
-Differentiable conceptual hydrological models in JAX.
-
 [![PyPI version](https://img.shields.io/pypi/v/hydrologeez)](https://pypi.org/project/hydrologeez/)
 [![Python versions](https://img.shields.io/pypi/pyversions/hydrologeez)](https://pypi.org/project/hydrologeez/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-hydrologeez implements conceptual rainfall-runoff models (GR6J, HBV) as
-[Equinox](https://github.com/patrick-kidger/equinox) modules on top of
-[JAX](https://github.com/google/jax). Every model is a PyTree whose fields are its
-parameters, so a full simulation is end-to-end differentiable: `jax.grad` flows through
-the entire `lax.scan` over your forcing series. That makes both gradient-based and
-evolutionary parameter calibration first-class.
+Differentiable conceptual rainfall-runoff state-space models implemented as
+PyTorch `torch.nn.Module` objects. GR6J and HBV run an eager recurrence over
+time, with Torch autograd available through the complete simulation.
 
 ## Installation
 
@@ -23,83 +18,81 @@ uv add hydrologeez
 pip install hydrologeez
 ```
 
-GPU (CUDA 12) wheels of JAX via the `cuda` extra:
+With optional HDX support:
 
 ```bash
-uv add "hydrologeez[cuda]"
-# or
-pip install "hydrologeez[cuda]"
+uv add "hydrologeez[hdx]"
 ```
 
-## Requirement: 64-bit precision (`JAX_ENABLE_X64=1`)
+## Dtype and device policy
 
-> **hydrologeez requires JAX 64-bit (float64) precision.** It does **not** flip this for
-> you. You must enable x64 **before** importing `jax` or `hydrologeez`, otherwise the
-> import raises `RuntimeError`.
-
-Enable it either by exporting the environment variable before running Python:
-
-```bash
-export JAX_ENABLE_X64=1
-```
-
-or, in code, as the very first thing your program does:
+Use `torch.float64` on CPU for numerical references and reproducibility. Use
+`torch.float32` on an explicitly selected accelerator for training. Conversion
+helpers make those choices locally and never mutate Torch global defaults.
 
 ```python
-import os
-os.environ["JAX_ENABLE_X64"] = "1"  # must run before any jax/hydrologeez import
+import torch
+
+from hydrologeez import reference_tensor, training_tensor
+
+reference = reference_tensor([1.0, 2.0, 3.0])
+training = training_tensor([1.0, 2.0, 3.0], device="cpu")
+
+assert reference.dtype == torch.float64
+assert training.dtype == torch.float32
 ```
 
-## Quick Start
+## Quick start
 
-A minimal forward run: build a GR6J model from explicit parameters, feed it a short
-synthetic daily forcing series, and read out simulated streamflow. No data files needed.
+Forcing tensors use leading `[batch, time]` dimensions. This one-basin example
+therefore returns shape `[1, 10]`.
 
 ```python
-import os
-
-os.environ["JAX_ENABLE_X64"] = "1"  # must be set before importing jax/hydrologeez
-
-import jax.numpy as jnp
+import torch
 
 from hydrologeez.models.gr6j import GR6J, GR6JForcing
 
-# GR6J's six parameters (x1..x6), each a scalar JAX array.
+dtype = torch.float64
 model = GR6J(
-    x1=jnp.asarray(350.0),  # production store capacity [mm]
-    x2=jnp.asarray(0.0),    # groundwater exchange coefficient
-    x3=jnp.asarray(90.0),   # routing store capacity [mm]
-    x4=jnp.asarray(1.7),    # unit-hydrograph time base [days]
-    x5=jnp.asarray(0.3),    # inter-catchment exchange threshold
-    x6=jnp.asarray(5.0),    # exponential store depth [mm]
+    x1=torch.tensor(350.0, dtype=dtype),
+    x2=torch.tensor(0.0, dtype=dtype),
+    x3=torch.tensor(90.0, dtype=dtype),
+    x4=torch.tensor(1.7, dtype=dtype),
+    x5=torch.tensor(0.3, dtype=dtype),
+    x6=torch.tensor(5.0, dtype=dtype),
+)
+forcing = GR6JForcing(
+    precip=torch.tensor([[0.0, 5.0, 12.0, 8.0, 0.0, 0.0, 3.0, 20.0, 1.0, 0.0]], dtype=dtype),
+    pet=torch.tensor([[1.0, 1.2, 1.1, 0.9, 1.0, 1.3, 1.1, 0.8, 1.0, 1.2]], dtype=dtype),
 )
 
-# Daily forcing; the leading axis is time. Precipitation and PET in mm/day.
-precip = jnp.asarray([0.0, 5.0, 12.0, 8.0, 0.0, 0.0, 3.0, 20.0, 1.0, 0.0])
-pet = jnp.asarray([1.0, 1.2, 1.1, 0.9, 1.0, 1.3, 1.1, 0.8, 1.0, 1.2])
-forcing = GR6JForcing(precip=precip, pet=pet)
-
-# Forward run -> simulated streamflow timeseries, shape (T,), dtype float64.
 streamflow = model.run(forcing)
-print(streamflow)
+print(streamflow.shape)  # torch.Size([1, 10])
 ```
 
-For full internal fluxes, pass `return_fluxes=True`:
-`observable, fluxes, final_state = model.run(forcing, return_fluxes=True)`.
+Pass `return_fluxes=True` to inspect the full trajectory:
 
-Gradient-based and evolutionary calibration (using ctrl-freak's `ga` / `nsga2` with the
-`evaluate_batch` hook) are covered in the [documentation](https://cooperbigfoot.github.io/hydrologeez/).
+```python
+streamflow, fluxes, final_state = model.run(forcing, return_fluxes=True)
+```
+
+Tensor leaves in the flux dataclass are stacked as `[B, T]`.
 
 ## Features
 
-- **GR6J and HBV** conceptual rainfall-runoff models, ready to run.
-- **Fully differentiable** in JAX: each model is an Equinox PyTree, so `jax.grad` and
-  `jax.value_and_grad` flow through the whole `lax.scan` simulation.
-- **Two calibration paths**: gradient descent (e.g. `optax`) and evolutionary search
-  (`ga` / `nsga2` from ctrl-freak, with a batched `evaluate_batch` hook).
-- **Batched simulation** via `batch_run` (vmap over a leading batch axis).
-- **64-bit by default**: import-time x64 enforcement keeps long store recurrences and
-  metric reductions numerically stable.
+- GR6J and single-zone HBV rainfall-runoff models.
+- Torch autograd through the eager recurrence.
+- Native leading batch dimensions on forcing, observations, state, and fluxes.
+- Registered parameters or explicit scalar, per-basin, and per-time tensors.
+- Separate no-grad warmup with a detached initial state for the main period.
+- Gradient calibration with `torch.optim` and evolutionary GA/NSGA-II calibration.
+- Explicit, local dtype and device selection.
+
+Gradient calibration uses bounded functional parameter mappings with
+`torch.optim`. Evolutionary calibration retains ctrl-freak's NumPy boundary but
+evaluates each population in one batched Torch call under `torch.no_grad()`.
+See the [contributor contract](https://cooperbigfoot.github.io/hydrologeez/contracts/)
+and [model documentation](https://cooperbigfoot.github.io/hydrologeez/).
 
 ## The name
 
