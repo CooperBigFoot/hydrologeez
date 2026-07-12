@@ -1,44 +1,49 @@
 # hydrologeez
 
-**Differentiable conceptual hydrological models expressed as state-space models in JAX.**
+hydrologeez provides differentiable GR6J and HBV state-space models as PyTorch
+`nn.Module` objects. An eager time loop makes each transition directly
+debuggable while Torch autograd differentiates through the simulation.
 
-hydrologeez reimplements conceptual rainfall-runoff models (GR6J and HBV-Light) as
-[Equinox](https://docs.kidger.site/equinox/) modules over a discrete-time
-state-space form, executed with `jax.lax.scan`.
+## State-space contract
 
-A model *is* an `eqx.Module` whose fields are its parameters, so
-`jax.grad(loss)(model)` differentiates straight through the time loop. Whole
-populations / many catchments are evaluated in one `vmap`-compiled call for
-calibration.
-
-## The state-space form
-
-```
-transition:  (state, forcing) -> (state, fluxes)   # fused; computes ALL internal fluxes
-observation: (state, fluxes)  -> observable        # pluggable; default = streamflow
-run:         lax.scan(transition) over forcing     # the fold
+```text
+transition:  (state[B,...], forcing[B,...], parameters) -> (state, fluxes)
+observation: (state, fluxes) -> observable[B]
+run:         eager fold over forcing[:, time] -> observable[B, T]
 ```
 
-## Precision is required and enforced
+- Forcing and returned observations have leading `[batch, time]` dimensions.
+- Registered `nn.Parameter` values are the default; complete explicit mappings
+  support scalar, per-basin, and per-basin/per-time values.
+- Warmup uses separate forcing under `torch.no_grad()` and detaches its final
+  state before the main simulation.
+- Gradient calibration uses `torch.optim`; GA and NSGA-II evaluate a whole
+  population as one no-grad Torch batch.
+- HDX loading is NumPy-first, with an explicit dtype/device conversion to Torch.
+- `hydrologeez.hcx` is a development-only, lazy conformance adapter and publishes
+  no `hcx.models` entry point.
 
-float64 is mandatory (long store accumulation + metric stability). hydrologeez
-performs a **loud import-time check** and *raises* if JAX x64 is off. It never
-silently flips global config. Enable it **before importing jax or hydrologeez**:
+## Dtype and device
 
-```bash
-JAX_ENABLE_X64=1 python your_script.py
-```
-
-or in-process, before any jax import:
+Use float64 on CPU for references and reproducibility, and float32 on an
+explicitly selected accelerator for training.
 
 ```python
-import os
-os.environ["JAX_ENABLE_X64"] = "1"
-import jax  # noqa: E402
+from hydrologeez import reference_tensor, training_tensor
+
+cpu_reference = reference_tensor([1.0, 2.0])
+accelerator_training = training_tensor([1.0, 2.0], device="cpu")
 ```
+
+Production accelerator code passes its actual CUDA or MPS device instead of
+`"cpu"`. These helpers make local conversions: importing hydrologeez performs no
+precision check and does not mutate process-global Torch defaults.
 
 ## Where to go next
 
-- [GR6J model](gr6j.md) - the equations, usage, and the API reference.
-- [HBV model](hbv.md) - the 14-parameter HBV-Light single-zone model: snow/soil/response math, the MAXBAS masked routing kernel, and the API reference.
-- [Contributor contract](contracts.md) - the two-method model contract, the static-shape/masked-kernel policy, the float64 enablement contract, tooling conventions (formatting, typing, testing), and the HDX I/O contract.
+- [GR6J](gr6j.md): equations, state, parameters, and usage.
+- [HBV](hbv.md): the single-zone HBV-Light implementation.
+- [HDX](hdx.md): NumPy-first dataset loading and explicit Torch conversion.
+- [Contributor contract](contracts.md): tensor shapes, calibration, tooling, and
+  architectural boundaries.
+- [Home](index.md): this overview.
