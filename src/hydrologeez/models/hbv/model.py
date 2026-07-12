@@ -1,17 +1,12 @@
-"""Single-zone HBV-Light as a differentiable state-space model on the SSM base.
-
-Pure JAX/Equinox implementation. Lumped (n_zones=1); elevation extrapolation
-is bypassed (input_elevation=None -> zone_temp=temp, zone_precip=precip).
-"""
+"""Single-zone HBV-Light as a differentiable PyTorch state-space model."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
-import equinox as eqx
-import jax
-import jax.numpy as jnp
 import torch
+from torch import nn
 
 from hydrologeez.models.hbv import constants, processes
 from hydrologeez.models.hbv.state import HBVState
@@ -20,7 +15,7 @@ from hydrologeez.ssm import StateSpaceModel
 
 @dataclass(frozen=True)
 class HBVForcing:
-    """Per-step or per-series HBV forcing (3 leaves)."""
+    """Per-step or batched time-series HBV forcing."""
 
     precip: torch.Tensor
     pet: torch.Tensor
@@ -54,100 +49,122 @@ class HBVFluxes:
 
 
 class HBVModel(StateSpaceModel):
-    """Single-zone (lumped) HBV-Light, 14-parameter daily model, as an Equinox module.
+    """Single-zone, 14-parameter daily HBV-Light model."""
 
-    Parameters are the 14 fields tt..maxbas (canonical order). ``n_zones`` and
-    ``routing_buffer_size`` are STATIC structural integers (never calibrated).
-    """
+    n_zones = 1
+    routing_buffer_size = constants.ROUTING_BUFFER_SIZE
 
-    tt: jax.Array
-    cfmax: jax.Array
-    sfcf: jax.Array
-    cwh: jax.Array
-    cfr: jax.Array
-    fc: jax.Array
-    lp: jax.Array
-    beta: jax.Array
-    k0: jax.Array
-    k1: jax.Array
-    k2: jax.Array
-    perc: jax.Array
-    uzl: jax.Array
-    maxbas: jax.Array
-    n_zones: int = eqx.field(static=True, default=1)
-    routing_buffer_size: int = eqx.field(static=True, default=constants.ROUTING_BUFFER_SIZE)
+    def __init__(
+        self,
+        *,
+        tt: torch.Tensor,
+        cfmax: torch.Tensor,
+        sfcf: torch.Tensor,
+        cwh: torch.Tensor,
+        cfr: torch.Tensor,
+        fc: torch.Tensor,
+        lp: torch.Tensor,
+        beta: torch.Tensor,
+        k0: torch.Tensor,
+        k1: torch.Tensor,
+        k2: torch.Tensor,
+        perc: torch.Tensor,
+        uzl: torch.Tensor,
+        maxbas: torch.Tensor,
+    ) -> None:
+        super().__init__()
+        self.tt = nn.Parameter(tt)
+        self.cfmax = nn.Parameter(cfmax)
+        self.sfcf = nn.Parameter(sfcf)
+        self.cwh = nn.Parameter(cwh)
+        self.cfr = nn.Parameter(cfr)
+        self.fc = nn.Parameter(fc)
+        self.lp = nn.Parameter(lp)
+        self.beta = nn.Parameter(beta)
+        self.k0 = nn.Parameter(k0)
+        self.k1 = nn.Parameter(k1)
+        self.k2 = nn.Parameter(k2)
+        self.perc = nn.Parameter(perc)
+        self.uzl = nn.Parameter(uzl)
+        self.maxbas = nn.Parameter(maxbas)
 
-    def init_state(self) -> HBVState:
-        """Rust State::initialize (state.rs:28-40): SM=0.5*fc, all else zero."""
+    def init_state(self, parameters: Mapping[str, torch.Tensor], *, batch_size: int) -> HBVState:
+        """Initialize soil moisture to half of FC and every other store to zero."""
+        zone_sm = (0.5 * parameters["fc"]).expand(batch_size)
+        zeros = zone_sm.new_zeros(batch_size)
         return HBVState(
-            zone_sp=jnp.asarray(0.0),  # ty: ignore[invalid-argument-type]
-            zone_lw=jnp.asarray(0.0),  # ty: ignore[invalid-argument-type]
-            zone_sm=0.5 * self.fc,  # ty: ignore[invalid-argument-type]
-            upper_zone=jnp.asarray(0.0),  # ty: ignore[invalid-argument-type]
-            lower_zone=jnp.asarray(0.0),  # ty: ignore[invalid-argument-type]
-            routing_buffer=jnp.zeros(self.routing_buffer_size),  # ty: ignore[invalid-argument-type]
+            zone_sp=zeros,
+            zone_lw=zeros,
+            zone_sm=zone_sm,
+            upper_zone=zeros,
+            lower_zone=zeros,
+            routing_buffer=zone_sm.new_zeros((batch_size, self.routing_buffer_size)),
         )
 
-    def transition(self, state: HBVState, forcing: HBVForcing) -> tuple[HBVState, HBVFluxes]:
+    def transition(
+        self,
+        state: HBVState,
+        forcing: HBVForcing,
+        parameters: Mapping[str, torch.Tensor],
+    ) -> tuple[HBVState, HBVFluxes]:
         precip = forcing.precip
         pet = forcing.pet
         temp = forcing.temp
 
-        uh_weights = processes.compute_triangular_weights(self.maxbas)  # ty: ignore[invalid-argument-type]
+        uh_weights = processes.compute_triangular_weights(parameters["maxbas"])
 
-        # --- Snow routine (reads start-of-step sp, lw) --- run.rs:195-203
-        p_rain, p_snow = processes.partition_precipitation(precip, temp, self.tt, self.sfcf)  # ty: ignore[invalid-argument-type]
-        melt = processes.compute_melt(temp, self.tt, self.cfmax, state.zone_sp)  # ty: ignore[invalid-argument-type]
-        refreeze = processes.compute_refreezing(temp, self.tt, self.cfmax, self.cfr, state.zone_lw)  # ty: ignore[invalid-argument-type]
+        p_rain, p_snow = processes.partition_precipitation(precip, temp, parameters["tt"], parameters["sfcf"])
+        melt = processes.compute_melt(temp, parameters["tt"], parameters["cfmax"], state.zone_sp)
+        refreeze = processes.compute_refreezing(
+            temp,
+            parameters["tt"],
+            parameters["cfmax"],
+            parameters["cfr"],
+            state.zone_lw,
+        )
         new_sp, new_lw, snow_outflow = processes.update_snow_pack(
             state.zone_sp,
             state.zone_lw,
             p_snow,
             melt,
             refreeze,
-            self.cwh,  # ty: ignore[invalid-argument-type]
+            parameters["cwh"],
         )
         snow_input = p_rain + snow_outflow
 
-        # --- Soil routine (recharge + ET + update all read start-of-step sm) --- Seibert & Vis (2012)
         recharge = processes.compute_recharge(
             snow_input,
             state.zone_sm,
-            self.fc,  # ty: ignore[invalid-argument-type]
-            self.beta,  # ty: ignore[invalid-argument-type]
+            parameters["fc"],
+            parameters["beta"],
         )
-        et_act = processes.compute_actual_et(pet, state.zone_sm, self.fc, self.lp)  # ty: ignore[invalid-argument-type]
+        et_act = processes.compute_actual_et(
+            pet,
+            state.zone_sm,
+            parameters["fc"],
+            parameters["lp"],
+        )
         new_sm, sm_overflow = processes.update_soil_moisture(
             state.zone_sm,
             snow_input,
             recharge,
             et_act,
-            self.fc,  # ty: ignore[invalid-argument-type]
+            parameters["fc"],
         )
-        # Above-FC excess routes to upper-zone recharge (not discarded). The reported
-        # recharge flux is the TOTAL soil->upper-zone flux (base recharge + overflow).
         recharge_total = recharge + sm_overflow
 
-        # --- Response routine (all read OLD SUZ/SLZ; explicit operator-splitting) --- run.rs:214-222
         q0, q1 = processes.upper_zone_outflows(
             state.upper_zone,
-            self.k0,  # ty: ignore[invalid-argument-type]
-            self.k1,  # ty: ignore[invalid-argument-type]
-            self.uzl,  # ty: ignore[invalid-argument-type]
+            parameters["k0"],
+            parameters["k1"],
+            parameters["uzl"],
         )
-        perc = processes.compute_percolation(
-            state.upper_zone,
-            self.perc,  # ty: ignore[invalid-argument-type]
-        )
+        perc = processes.compute_percolation(state.upper_zone, parameters["perc"])
         new_suz = processes.update_upper_zone(state.upper_zone, recharge_total, q0, q1, perc)
-        q2 = processes.lower_zone_outflow(
-            state.lower_zone,
-            self.k2,  # ty: ignore[invalid-argument-type]
-        )
+        q2 = processes.lower_zone_outflow(state.lower_zone, parameters["k2"])
         new_slz = processes.update_lower_zone(state.lower_zone, perc, q2)
         qgw = q0 + q1 + q2
 
-        # --- Routing (read-after-shift; same-day ordinate-1 term, no forced lag) ---
         qsim, new_buffer = processes.convolve_routing(state.routing_buffer, uh_weights, qgw)
 
         new_state = HBVState(
