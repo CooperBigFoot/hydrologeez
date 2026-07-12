@@ -80,12 +80,12 @@ class HBVModel(StateSpaceModel):
     def init_state(self) -> HBVState:
         """Rust State::initialize (state.rs:28-40): SM=0.5*fc, all else zero."""
         return HBVState(
-            zone_sp=jnp.asarray(0.0),
-            zone_lw=jnp.asarray(0.0),
-            zone_sm=0.5 * self.fc,
-            upper_zone=jnp.asarray(0.0),
-            lower_zone=jnp.asarray(0.0),
-            routing_buffer=jnp.zeros(self.routing_buffer_size),
+            zone_sp=jnp.asarray(0.0),  # ty: ignore[invalid-argument-type]
+            zone_lw=jnp.asarray(0.0),  # ty: ignore[invalid-argument-type]
+            zone_sm=0.5 * self.fc,  # ty: ignore[invalid-argument-type]
+            upper_zone=jnp.asarray(0.0),  # ty: ignore[invalid-argument-type]
+            lower_zone=jnp.asarray(0.0),  # ty: ignore[invalid-argument-type]
+            routing_buffer=jnp.zeros(self.routing_buffer_size),  # ty: ignore[invalid-argument-type]
         )
 
     def transition(self, state: HBVState, forcing: HBVForcing) -> tuple[HBVState, HBVFluxes]:
@@ -93,30 +93,57 @@ class HBVModel(StateSpaceModel):
         pet = forcing.pet
         temp = forcing.temp
 
-        uh_weights = processes.compute_triangular_weights(self.maxbas)
+        uh_weights = processes.compute_triangular_weights(self.maxbas)  # ty: ignore[invalid-argument-type]
 
         # --- Snow routine (reads start-of-step sp, lw) --- run.rs:195-203
         p_rain, p_snow = processes.partition_precipitation(precip, temp, self.tt, self.sfcf)  # ty: ignore[invalid-argument-type]
         melt = processes.compute_melt(temp, self.tt, self.cfmax, state.zone_sp)  # ty: ignore[invalid-argument-type]
         refreeze = processes.compute_refreezing(temp, self.tt, self.cfmax, self.cfr, state.zone_lw)  # ty: ignore[invalid-argument-type]
         new_sp, new_lw, snow_outflow = processes.update_snow_pack(
-            state.zone_sp, state.zone_lw, p_snow, melt, refreeze, self.cwh
+            state.zone_sp,
+            state.zone_lw,
+            p_snow,
+            melt,
+            refreeze,
+            self.cwh,  # ty: ignore[invalid-argument-type]
         )
         snow_input = p_rain + snow_outflow
 
         # --- Soil routine (recharge + ET + update all read start-of-step sm) --- Seibert & Vis (2012)
-        recharge = processes.compute_recharge(snow_input, state.zone_sm, self.fc, self.beta)
+        recharge = processes.compute_recharge(
+            snow_input,
+            state.zone_sm,
+            self.fc,  # ty: ignore[invalid-argument-type]
+            self.beta,  # ty: ignore[invalid-argument-type]
+        )
         et_act = processes.compute_actual_et(pet, state.zone_sm, self.fc, self.lp)  # ty: ignore[invalid-argument-type]
-        new_sm, sm_overflow = processes.update_soil_moisture(state.zone_sm, snow_input, recharge, et_act, self.fc)
+        new_sm, sm_overflow = processes.update_soil_moisture(
+            state.zone_sm,
+            snow_input,
+            recharge,
+            et_act,
+            self.fc,  # ty: ignore[invalid-argument-type]
+        )
         # Above-FC excess routes to upper-zone recharge (not discarded). The reported
         # recharge flux is the TOTAL soil->upper-zone flux (base recharge + overflow).
         recharge_total = recharge + sm_overflow
 
         # --- Response routine (all read OLD SUZ/SLZ; explicit operator-splitting) --- run.rs:214-222
-        q0, q1 = processes.upper_zone_outflows(state.upper_zone, self.k0, self.k1, self.uzl)
-        perc = processes.compute_percolation(state.upper_zone, self.perc)
+        q0, q1 = processes.upper_zone_outflows(
+            state.upper_zone,
+            self.k0,  # ty: ignore[invalid-argument-type]
+            self.k1,  # ty: ignore[invalid-argument-type]
+            self.uzl,  # ty: ignore[invalid-argument-type]
+        )
+        perc = processes.compute_percolation(
+            state.upper_zone,
+            self.perc,  # ty: ignore[invalid-argument-type]
+        )
         new_suz = processes.update_upper_zone(state.upper_zone, recharge_total, q0, q1, perc)
-        q2 = processes.lower_zone_outflow(state.lower_zone, self.k2)
+        q2 = processes.lower_zone_outflow(
+            state.lower_zone,
+            self.k2,  # ty: ignore[invalid-argument-type]
+        )
         new_slz = processes.update_lower_zone(state.lower_zone, perc, q2)
         qgw = q0 + q1 + q2
 
@@ -135,22 +162,22 @@ class HBVModel(StateSpaceModel):
             precip=precip,
             temp=temp,
             pet=pet,
-            precip_rain=p_rain,  # ty: ignore[invalid-argument-type]
-            precip_snow=p_snow,  # ty: ignore[invalid-argument-type]
-            snow_pack=new_sp,  # ty: ignore[invalid-argument-type]
-            snow_melt=melt,  # ty: ignore[invalid-argument-type]
-            liquid_water_in_snow=new_lw,  # ty: ignore[invalid-argument-type]
-            snow_input=snow_input,  # ty: ignore[invalid-argument-type]
-            soil_moisture=new_sm,  # ty: ignore[invalid-argument-type]
-            recharge=recharge_total,  # ty: ignore[invalid-argument-type]
-            actual_et=et_act,  # ty: ignore[invalid-argument-type]
-            upper_zone=new_suz,  # ty: ignore[invalid-argument-type]
-            lower_zone=new_slz,  # ty: ignore[invalid-argument-type]
-            q0=q0,  # ty: ignore[invalid-argument-type]
-            q1=q1,  # ty: ignore[invalid-argument-type]
-            q2=q2,  # ty: ignore[invalid-argument-type]
-            percolation=perc,  # ty: ignore[invalid-argument-type]
-            qgw=qgw,  # ty: ignore[invalid-argument-type]
-            streamflow=qsim,  # ty: ignore[invalid-argument-type]
+            precip_rain=p_rain,
+            precip_snow=p_snow,
+            snow_pack=new_sp,
+            snow_melt=melt,
+            liquid_water_in_snow=new_lw,
+            snow_input=snow_input,
+            soil_moisture=new_sm,
+            recharge=recharge_total,
+            actual_et=et_act,
+            upper_zone=new_suz,
+            lower_zone=new_slz,
+            q0=q0,
+            q1=q1,
+            q2=q2,
+            percolation=perc,
+            qgw=qgw,
+            streamflow=qsim,
         )
         return new_state, fluxes
