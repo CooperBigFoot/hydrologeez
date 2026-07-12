@@ -1,57 +1,46 @@
-"""GR6J state PyTree."""
+"""GR6J Torch state container."""
 
 from __future__ import annotations
 
-import equinox as eqx
-import jax.numpy as jnp
-from jax import Array
+from dataclasses import dataclass
 
-from .constants import UH1_LEN, UH2_LEN
+import torch
+
+from .constants import STATE_SIZE, UH1_LEN, UH2_LEN
 
 
-class State(eqx.Module):
-    """GR6J model state (an Equinox PyTree).
+@dataclass(frozen=True)
+class State:
+    """GR6J state tensors with optional shared leading batch dimensions."""
 
-    Fields
-    ------
-    production_store : 0-d array
-        Soil moisture store S [mm].
-    routing_store : 0-d array
-        Routing store R [mm].
-    exponential_store : 0-d array
-        Exponential store Exp [mm] (may be negative).
-    uh1 : (20,) array
-        UH1 delay-line buffer.
-    uh2 : (40,) array
-        UH2 delay-line buffer.
-    """
+    production_store: torch.Tensor
+    routing_store: torch.Tensor
+    exponential_store: torch.Tensor
+    uh1: torch.Tensor
+    uh2: torch.Tensor
 
-    production_store: Array
-    routing_store: Array
-    exponential_store: Array
-    uh1: Array
-    uh2: Array
-
-    def to_flat(self) -> Array:
-        """Pack into the Rust 63-element layout [S, R, Exp, uh1, uh2]."""
-        return jnp.concatenate(
-            [
-                jnp.atleast_1d(self.production_store),
-                jnp.atleast_1d(self.routing_store),
-                jnp.atleast_1d(self.exponential_store),
+    def to_flat(self) -> torch.Tensor:
+        """Pack the last dimension as ``[S, R, Exp, uh1, uh2]``."""
+        return torch.cat(
+            (
+                self.production_store.unsqueeze(-1),
+                self.routing_store.unsqueeze(-1),
+                self.exponential_store.unsqueeze(-1),
                 self.uh1,
                 self.uh2,
-            ]
+            ),
+            dim=-1,
         )
 
     @classmethod
-    def from_flat(cls, arr: Array) -> State:
-        """Reconstruct from the Rust 63-element layout."""
-        flat = jnp.asarray(arr, dtype=jnp.float64)
+    def from_flat(cls, arr: torch.Tensor) -> State:
+        """Reconstruct a state from the Rust 63-element last dimension."""
+        if arr.shape[-1] != STATE_SIZE:
+            raise ValueError(f"Expected last dimension of size {STATE_SIZE}, got {arr.shape[-1]}")
         return cls(
-            production_store=flat[0],
-            routing_store=flat[1],
-            exponential_store=flat[2],
-            uh1=flat[3 : 3 + UH1_LEN],
-            uh2=flat[3 + UH1_LEN : 3 + UH1_LEN + UH2_LEN],
+            production_store=arr[..., 0],
+            routing_store=arr[..., 1],
+            exponential_store=arr[..., 2],
+            uh1=arr[..., 3 : 3 + UH1_LEN],
+            uh2=arr[..., 3 + UH1_LEN : 3 + UH1_LEN + UH2_LEN],
         )

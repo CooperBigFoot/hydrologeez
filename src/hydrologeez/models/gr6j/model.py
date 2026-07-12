@@ -64,42 +64,60 @@ class GR6J(StateSpaceModel):
 
     def init_state(self) -> State:
         return State(
-            production_store=0.3 * self.x1,
-            routing_store=0.5 * self.x3,
-            exponential_store=jnp.asarray(0.0),
-            uh1=jnp.zeros(self.nh),
-            uh2=jnp.zeros(2 * self.nh),
+            production_store=0.3 * self.x1,  # ty: ignore[invalid-argument-type]
+            routing_store=0.5 * self.x3,  # ty: ignore[invalid-argument-type]
+            exponential_store=jnp.asarray(0.0),  # ty: ignore[invalid-argument-type]
+            uh1=jnp.zeros(self.nh),  # ty: ignore[invalid-argument-type]
+            uh2=jnp.zeros(2 * self.nh),  # ty: ignore[invalid-argument-type]
         )
 
     def transition(self, state: State, forcing: GR6JForcing) -> tuple[State, GR6JFluxes]:
         precip = forcing.precip
         pet = forcing.pet
 
-        uh1_ord, uh2_ord = processes.compute_uh_ordinates(self.x4)
+        uh1_ord, uh2_ord = processes.compute_uh_ordinates(
+            self.x4  # ty: ignore[invalid-argument-type]
+        )
 
         s_after_ps, actual_et, net_rainfall_pn, effective_rainfall_pr = processes.production_store_update(
-            precip,  # ty: ignore[invalid-argument-type]
-            pet,  # ty: ignore[invalid-argument-type]
+            precip,
+            pet,
             state.production_store,
-            self.x1,
+            self.x1,  # ty: ignore[invalid-argument-type]
         )
         storage_infiltration = net_rainfall_pn - effective_rainfall_pr
 
-        s_after_perc, percolation_amount = processes.percolation(s_after_ps, self.x1)
+        s_after_perc, percolation_amount = processes.percolation(
+            s_after_ps,
+            self.x1,  # ty: ignore[invalid-argument-type]
+        )
         total_effective_rainfall = effective_rainfall_pr + percolation_amount
 
         q9, uh1 = processes.convolve_uh(state.uh1, uh1_ord, B * total_effective_rainfall)
         q1, uh2 = processes.convolve_uh(state.uh2, uh2_ord, (1.0 - B) * total_effective_rainfall)
 
-        exchange_f = processes.groundwater_exchange(state.routing_store, self.x2, self.x3, self.x5)
+        exchange_f = processes.groundwater_exchange(
+            state.routing_store,
+            self.x2,  # ty: ignore[invalid-argument-type]
+            self.x3,  # ty: ignore[invalid-argument-type]
+            self.x5,  # ty: ignore[invalid-argument-type]
+        )
 
         new_routing_store, qr, actual_exchange_routing = processes.routing_store_update(
-            state.routing_store, (1.0 - C) * q9, exchange_f, self.x3
+            state.routing_store,
+            (1.0 - C) * q9,
+            exchange_f,
+            self.x3,  # ty: ignore[invalid-argument-type]
         )
-        new_exp_store, qrexp = processes.exponential_store_update(state.exponential_store, C * q9, exchange_f, self.x6)
+        new_exp_store, qrexp = processes.exponential_store_update(
+            state.exponential_store,
+            C * q9,
+            exchange_f,
+            self.x6,  # ty: ignore[invalid-argument-type]
+        )
         qd, actual_exchange_direct = processes.direct_branch(q1, exchange_f)
 
-        streamflow = jnp.maximum(qr + qrexp + qd, 0.0)
+        streamflow = jnp.maximum(qr + qrexp + qd, 0.0)  # ty: ignore[invalid-argument-type]
         actual_exchange_total = actual_exchange_routing + actual_exchange_direct + exchange_f
 
         new_state = State(
@@ -112,23 +130,23 @@ class GR6J(StateSpaceModel):
         fluxes = GR6JFluxes(
             pet=pet,
             precip=precip,
-            production_store=s_after_perc,  # ty: ignore[invalid-argument-type]
-            net_rainfall=net_rainfall_pn,  # ty: ignore[invalid-argument-type]
-            storage_infiltration=storage_infiltration,  # ty: ignore[invalid-argument-type]
-            actual_et=actual_et,  # ty: ignore[invalid-argument-type]
-            percolation=percolation_amount,  # ty: ignore[invalid-argument-type]
-            effective_rainfall=total_effective_rainfall,  # ty: ignore[invalid-argument-type]
-            q9=q9,  # ty: ignore[invalid-argument-type]
-            q1=q1,  # ty: ignore[invalid-argument-type]
-            routing_store=new_routing_store,  # ty: ignore[invalid-argument-type]
-            exchange=exchange_f,  # ty: ignore[invalid-argument-type]
-            actual_exchange_routing=actual_exchange_routing,  # ty: ignore[invalid-argument-type]
-            actual_exchange_direct=actual_exchange_direct,  # ty: ignore[invalid-argument-type]
-            actual_exchange_total=actual_exchange_total,  # ty: ignore[invalid-argument-type]
-            qr=qr,  # ty: ignore[invalid-argument-type]
-            qrexp=qrexp,  # ty: ignore[invalid-argument-type]
-            exponential_store=new_exp_store,  # ty: ignore[invalid-argument-type]
-            qd=qd,  # ty: ignore[invalid-argument-type]
+            production_store=s_after_perc,
+            net_rainfall=net_rainfall_pn,
+            storage_infiltration=storage_infiltration,
+            actual_et=actual_et,
+            percolation=percolation_amount,
+            effective_rainfall=total_effective_rainfall,
+            q9=q9,
+            q1=q1,
+            routing_store=new_routing_store,
+            exchange=exchange_f,
+            actual_exchange_routing=actual_exchange_routing,
+            actual_exchange_direct=actual_exchange_direct,
+            actual_exchange_total=actual_exchange_total,
+            qr=qr,
+            qrexp=qrexp,
+            exponential_store=new_exp_store,
+            qd=qd,
             streamflow=streamflow,  # ty: ignore[invalid-argument-type]
         )
         return new_state, fluxes
