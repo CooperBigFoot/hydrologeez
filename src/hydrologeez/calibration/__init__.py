@@ -1,4 +1,4 @@
-"""Dual calibration stacks for hydrologeez models: gradient (optax) and derivative-free (ctrl-freak)."""
+"""Torch gradient calibration and transitional derivative-free calibration."""
 
 from hydrologeez.calibration.adapter import (
     GR6J_SPEC,
@@ -6,6 +6,7 @@ from hydrologeez.calibration.adapter import (
     PARAM_NAMES,
     ParamSpec,
     array_to_model,
+    array_to_parameters,
     bounds_array,
     flat_to_model,
     model_to_flat,
@@ -32,6 +33,7 @@ __all__ = [
     "flat_to_model",
     "params_to_array",
     "array_to_model",
+    "array_to_parameters",
     "make_batch_evaluator",
     "make_objective",
     "calibrate_gradient",
