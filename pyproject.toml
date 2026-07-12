@@ -60,6 +60,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "hcx",
     "pytest>=8.3", # tests
     "pytest-cov>=6.2.1",
     "ruff>=0.12", # linter + formatter
@@ -137,3 +138,6 @@ replace = '__version__ = "{new_version}"'
 
 [tool.uv]
 default-groups = ["dev", "docs"]
+
+[tool.uv.sources]
+hcx = { git = 'https://github.com/CooperBigFoot/hcx', rev = 'b1ecf5f' }
