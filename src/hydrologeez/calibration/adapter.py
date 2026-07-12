@@ -1,24 +1,21 @@
-"""Adapter between an Equinox model's params and a flat float64 array.
+"""Bridge hydrological parameter specifications to PyTorch modules and tensors.
 
-Two equivalent views are provided:
-
-* ``model_to_flat`` / ``flat_to_model`` -- the generic Equinox view via
-  ``eqx.partition(model, eqx.is_inexact_array)`` + ``jax.flatten_util.ravel_pytree``
-  (the DESIGN-mandated mechanism). Model-agnostic; behavior unchanged.
-* ``params_to_array`` / ``array_to_model`` -- an explicit, ordered named-param view
-  used as the canonical column order for the ctrl-freak ``(pop_size, n_params)``
-  population matrix. Parameterised by a ``ParamSpec`` (names + bounds) defaulting to
-  ``GR6J_SPEC`` so existing GR6J call sites are byte-identical.
-
-The two views agree element-wise (asserted in tests).
+Two views are provided. ``params_to_array`` and ``array_to_parameters`` use a
+canonical ``ParamSpec`` order; the latter is the differentiable functional view.
+``array_to_model`` is instead an independent module-reconstruction view.
+``model_to_flat`` and ``flat_to_model`` generically flatten and reconstruct all
+registered parameters in registration order.
 """
 
-from dataclasses import dataclass
+from __future__ import annotations
 
-import equinox as eqx
-import jax
-import jax.numpy as jnp
-from jax.flatten_util import ravel_pytree
+import copy
+import math
+from dataclasses import dataclass
+from typing import Any
+
+import torch
+from torch import nn
 
 from hydrologeez.models.hbv import constants as hbv_constants
 
@@ -62,41 +59,156 @@ _HBV_NAMES, _HBV_LOWER, _HBV_UPPER = _hbv_bounds()
 HBV_SPEC: ParamSpec = ParamSpec(names=_HBV_NAMES, lower=_HBV_LOWER, upper=_HBV_UPPER)
 
 
-def bounds_array(spec: ParamSpec = GR6J_SPEC) -> tuple[jax.Array, jax.Array]:
-    """Return ``(lower, upper)`` float64 arrays in ``spec.names`` order."""
-    return (
-        jnp.asarray(spec.lower, dtype=jnp.float64),
-        jnp.asarray(spec.upper, dtype=jnp.float64),
+@dataclass(frozen=True)
+class _ParameterRecord:
+    name: str
+    shape: torch.Size
+    numel: int
+    requires_grad: bool
+
+
+@dataclass(frozen=True)
+class _FlatAux:
+    template: nn.Module
+    records: tuple[_ParameterRecord, ...]
+    dtype: torch.dtype
+    device: torch.device
+
+
+def _validate_spec(spec: ParamSpec) -> None:
+    size = len(spec.names)
+    if size == 0 or len(spec.lower) != size or len(spec.upper) != size:
+        raise ValueError("spec names, lower, and upper must have equal nonzero lengths")
+    if len(set(spec.names)) != size:
+        raise ValueError("spec parameter names must be unique")
+    if any(
+        not math.isfinite(lower) or not math.isfinite(upper) or lower >= upper
+        for lower, upper in zip(spec.lower, spec.upper, strict=True)
+    ):
+        raise ValueError("spec bounds must be finite with lower strictly below upper")
+
+
+def _require_module(value: Any, label: str) -> nn.Module:
+    if not isinstance(value, nn.Module):
+        raise TypeError(f"{label} must be a torch.nn.Module")
+    return value
+
+
+def _validate_theta(theta: torch.Tensor, spec: ParamSpec) -> None:
+    _validate_spec(spec)
+    if not isinstance(theta, torch.Tensor):
+        raise TypeError("theta must be a torch.Tensor")
+    if theta.ndim == 0:
+        raise ValueError("theta must have at least one dimension")
+    if theta.shape[-1] != len(spec.names):
+        raise ValueError(f"theta final dimension must have length {len(spec.names)}")
+
+
+def _install_parameter(module: nn.Module, name: str, parameter: nn.Parameter) -> None:
+    parts = name.split(".")
+    target = module
+    for part in parts[:-1]:
+        child = target.get_submodule(part)
+        target = child
+    setattr(target, parts[-1], parameter)
+
+
+def bounds_array(
+    spec: ParamSpec = GR6J_SPEC,
+    *,
+    dtype: torch.dtype = torch.float64,
+    device: torch.device | str | None = None,
+) -> Any:
+    """Return fresh lower and upper tensors in canonical order."""
+    _validate_spec(spec)
+    return torch.tensor(spec.lower, dtype=dtype, device=device), torch.tensor(spec.upper, dtype=dtype, device=device)
+
+
+def params_to_array(model: Any, spec: ParamSpec = GR6J_SPEC) -> Any:
+    """Stack exact top-level registered parameters in canonical order."""
+    _validate_spec(spec)
+    module = _require_module(model, "model")
+    if any("." in name for name in spec.names):
+        raise ValueError("params_to_array only accepts top-level parameter names")
+    registered = dict(module.named_parameters())
+    missing = [name for name in spec.names if name not in registered]
+    if missing:
+        raise ValueError(f"missing registered parameters: {', '.join(missing)}")
+    parameters: list[torch.Tensor] = [registered[name] for name in spec.names]
+    first = parameters[0]
+    if any(parameter.shape != first.shape for parameter in parameters[1:]):
+        raise ValueError("selected parameters must have identical shapes")
+    if any(parameter.dtype != first.dtype for parameter in parameters[1:]):
+        raise ValueError("selected parameters must have identical dtypes")
+    if any(parameter.device != first.device for parameter in parameters[1:]):
+        raise ValueError("selected parameters must be on the same device")
+    return torch.stack(parameters, dim=-1)
+
+
+def array_to_parameters(
+    theta: torch.Tensor,
+    spec: ParamSpec = GR6J_SPEC,
+) -> dict[str, torch.Tensor]:
+    """Return differentiable named tensor views of the final parameter axis."""
+    _validate_theta(theta, spec)
+    return {name: theta[..., index] for index, name in enumerate(spec.names)}
+
+
+def array_to_model(template: Any, theta: Any, spec: ParamSpec = GR6J_SPEC) -> Any:
+    """Reconstruct a module with independent registered canonical parameters."""
+    _validate_theta(theta, spec)
+    module = _require_module(template, "template")
+    if any("." in name for name in spec.names):
+        raise ValueError("array_to_model only accepts top-level parameter names")
+    registered = dict(module.named_parameters())
+    missing = [name for name in spec.names if name not in registered]
+    if missing:
+        raise ValueError(f"missing registered parameters: {', '.join(missing)}")
+    rebuilt = copy.deepcopy(module)
+    for index, name in enumerate(spec.names):
+        replacement = nn.Parameter(theta[..., index].detach().clone(), requires_grad=registered[name].requires_grad)
+        setattr(rebuilt, name, replacement)
+    return rebuilt
+
+
+def model_to_flat(model: Any) -> tuple[torch.Tensor, Any]:
+    """Flatten all registered parameters in registration order without detaching."""
+    module = _require_module(model, "model")
+    named = list(module.named_parameters())
+    if not named:
+        raise ValueError("model must have at least one registered parameter")
+    first = named[0][1]
+    if any(parameter.dtype != first.dtype for _, parameter in named[1:]):
+        raise ValueError("registered parameters must have identical dtypes")
+    if any(parameter.device != first.device for _, parameter in named[1:]):
+        raise ValueError("registered parameters must be on the same device")
+    records = tuple(
+        _ParameterRecord(name, parameter.shape, parameter.numel(), parameter.requires_grad) for name, parameter in named
     )
+    flat = torch.cat([parameter.reshape(-1) for _, parameter in named])
+    aux = _FlatAux(copy.deepcopy(module), records, first.dtype, first.device)
+    return flat, aux
 
 
-def params_to_array(model: eqx.Module, spec: ParamSpec = GR6J_SPEC) -> jax.Array:
-    """Extract the named-param vector from a model in ``spec.names`` order."""
-    return jnp.asarray([jnp.asarray(getattr(model, n)) for n in spec.names], dtype=jnp.float64)
-
-
-def array_to_model(template: eqx.Module, theta: jax.Array, spec: ParamSpec = GR6J_SPEC) -> eqx.Module:
-    """Rebuild a model from ``template`` with ``spec.names`` replaced by ``theta``.
-
-    Replacement leaves are ``jnp`` (inexact) arrays so the rebuilt model's named
-    params are always inexact-array leaves regardless of how ``template`` was built.
-    """
-    theta = jnp.asarray(theta, dtype=jnp.float64)
-    return eqx.tree_at(
-        lambda m: [getattr(m, n) for n in spec.names],
-        template,
-        [theta[i] for i in range(len(spec.names))],
-    )
-
-
-def model_to_flat(model: eqx.Module):
-    """Generic Equinox flatten: returns (flat float64 array, aux) where aux reconstructs."""
-    params, static = eqx.partition(model, eqx.is_inexact_array)
-    flat, unravel = ravel_pytree(params)
-    return jnp.asarray(flat, dtype=jnp.float64), (unravel, static)
-
-
-def flat_to_model(flat: jax.Array, aux) -> eqx.Module:
-    """Inverse of ``model_to_flat``."""
-    unravel, static = aux
-    return eqx.combine(unravel(jnp.asarray(flat, dtype=jnp.float64)), static)
+def flat_to_model(flat: torch.Tensor, aux: Any) -> Any:
+    """Reconstruct an independent module from generic flatten metadata."""
+    if not isinstance(flat, torch.Tensor):
+        raise TypeError("flat must be a torch.Tensor")
+    if not isinstance(aux, _FlatAux):
+        raise TypeError("aux must be metadata returned by model_to_flat")
+    if flat.ndim != 1:
+        raise ValueError("flat must be one-dimensional")
+    total = sum(record.numel for record in aux.records)
+    if flat.numel() != total:
+        raise ValueError(f"flat must contain exactly {total} values")
+    if flat.dtype != aux.dtype:
+        raise ValueError("flat dtype does not match reconstruction metadata")
+    if flat.device != aux.device:
+        raise ValueError("flat device does not match reconstruction metadata")
+    rebuilt = copy.deepcopy(aux.template)
+    offset = 0
+    for record in aux.records:
+        value = flat[offset : offset + record.numel].reshape(record.shape).detach().clone()
+        _install_parameter(rebuilt, record.name, nn.Parameter(value, requires_grad=record.requires_grad))
+        offset += record.numel
+    return rebuilt
