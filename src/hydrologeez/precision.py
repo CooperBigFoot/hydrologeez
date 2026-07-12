@@ -18,7 +18,7 @@ REFERENCE_DEVICE = torch.device("cpu")
 TRAINING_DTYPE = torch.float32
 
 ENABLE_FIX_MESSAGE = (
-    "JAX x64 enforcement has been retired; use reference_tensor() for the "
+    "Import-time x64 enforcement has been retired; use reference_tensor() for the "
     "float64 CPU reference path or training_tensor() for float32 training."
 )
 
@@ -56,5 +56,5 @@ def training_tensor(data: Any, *, device: torch.device | str) -> Tensor:
 
 
 def enforce_float64() -> None:
-    """Deprecated compatibility no-op for the retired JAX import guard."""
+    """Deprecated compatibility no-op for the retired import-time float64 guard."""
     warnings.warn(ENABLE_FIX_MESSAGE, DeprecationWarning, stacklevel=2)
