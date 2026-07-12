@@ -1,94 +1,109 @@
 # Contributor contract
 
-This page is the binding contract for adding or modifying a model in hydrologeez.
+This page is the binding contract for adding or modifying a hydrologeez model.
 
-## 1. Implement exactly two methods
+## 1. State-space model interface
 
-A model is a subclass of `hydrologeez.ssm.StateSpaceModel` (an `eqx.Module`). Its
-fields are its calibratable parameters. You implement only:
+A model subclasses `hydrologeez.ssm.StateSpaceModel`, an abstract
+`torch.nn.Module`, and implements exactly two methods:
 
-- `init_state(self) -> State` - the initial `lax.scan` carry (the model stores).
-- `transition(self, state, forcing) -> (state, fluxes)` - one fused step that
-  returns the next state and all internal fluxes for that step.
+```python
+def init_state(self, parameters, *, batch_size): ...
 
-You do not implement the time loop. The base class provides:
+def transition(self, state, forcing, parameters): ...
 
-- `run(forcing, *, observation_operator=default_streamflow_observation, return_fluxes=False)`
-  - folds `transition` over `forcing` with `lax.scan`. Returns the observable
-  timeseries; with `return_fluxes=True` returns `(observable, fluxes, final_state)`.
-- `batch_run(forcings, ...)` - `vmap` of `run` over a leading batch axis.
+model.run(
+    forcing,
+    parameters=None,
+    warmup=None,
+    warmup_parameters=None,
+    observation_operator=default_streamflow_observation,
+    return_fluxes=False,
+)
+```
 
-## 2. Process math lives in free functions
+`init_state` receives the resolved parameter mapping and batch size. `transition`
+receives one timestep of batched forcing and the parameter tensors, and returns
+the next state and fluxes. The base `run` method performs the eager Python time
+loop. It uses registered parameters when `parameters` is omitted; otherwise it
+uses the supplied complete mapping. It returns observations `[B, T]`, or
+`(observations, fluxes, final_state)` when `return_fluxes=True`, with dataclass
+flux leaves stacked on dimension 1.
 
-All process equations (production store, percolation, unit-hydrograph convolution,
-routing, exchange, ...) live as plain free functions in a per-model `processes.py`,
-so they are unit-testable in isolation and reusable. `transition` only wires them
-together. Do not bury process math inside the module methods.
+## 2. Process and observation functions
 
-## 3. The observation operator is pluggable
+Process equations belong in plain free functions in each model's `processes.py`,
+where they are independently testable and reusable. `transition` wires them
+together. The pluggable observation operator maps `(state, fluxes)` to an
+observable; the canonical default is
+`hydrologeez.default_streamflow_observation`.
 
-An observation operator maps `(state, fluxes) -> observable`. The single canonical
-default is `hydrologeez.default_streamflow_observation` (returns `fluxes.streamflow`).
-Reference it; do not define a second, contradictory default. `run`/`batch_run`
-accept an `observation_operator=` override.
+## 3. Tensor shapes and fixed kernels
 
-## 4. Static-shape / masked-kernel policy (hard JAX rule)
+All forcing leaves share `[B, T]`. Per-step state and flux tensor leaves preserve
+the leading batch dimension. Explicit parameter leaves may be scalar `[]`,
+per-basin `[B]`, or per-basin/per-time `[B, T]`.
 
-Under `jit`/`vmap`, array shapes must be static. Therefore:
+GR6J unit-hydrograph and HBV routing delay lines remain fixed-size. This preserves
+model semantics and consistent batched tensor shapes while their ordinates remain
+tensor functions of continuous parameters. Structural integers are ordinary,
+non-calibrated module configuration.
 
-- **Structural integers** that set an array size (elevation bands, HBV zones, the
-  GR6J UH length `nh`) are `eqx.field(static=True)` config fields, set at
-  construction and **never calibrated**.
-- **Continuous shape-affecting parameters** (GR6J `x4` -> UH length) use
-  **fixed-length masked kernels** sized to a declared upper bound, with ordinates
-  computed as a *smooth* function of the parameter and zero-padded/masked beyond
-  active support. This keeps shapes static and keeps the parameter differentiable.
-  GR6J ships `UH1` length 20 and `UH2` length 40 with `x4_max = 10`; the S-curves
-  taper smoothly so `jax.grad` of the ordinates w.r.t. `x4` is finite and
-  continuous across integer `x4`.
+## 4. Dtype and device
 
-## 5. float64 requirement and enablement contract
+Float64 on CPU is the reference and golden-fixture path. Float32 on an explicitly
+selected accelerator is the training path. Use `reference_tensor`,
+`training_tensor`, `reference_defaults`, and `training_defaults` for explicit
+local choices. Preserve caller dtype/device. Do not call
+`torch.set_default_dtype`, mutate the default device, or add an import-time guard.
 
-float64 is required process-wide (long store accumulation + metric stability).
+## 5. Warmup
 
-- hydrologeez enforces this with a **loud import-time check**: `import hydrologeez`
-  calls `enforce_float64()`, which **raises** if `jax.config.jax_enable_x64` is not
-  `True`. It deliberately does not silently flip `jax.config`.
-- **Enablement is the caller's responsibility, and must happen before jax is
-  imported**. JAX reads `JAX_ENABLE_X64` at import time. The three canonical
-  mechanisms are:
-  - Tests: `tests/conftest.py` sets `os.environ["JAX_ENABLE_X64"] = "1"` before any
-    jax/hydrologeez import. Reuse it; do not invent another.
-  - CI: the workflow declares `env: JAX_ENABLE_X64: "1"`.
-  - Scripts/examples: set `os.environ["JAX_ENABLE_X64"] = "1"` at the very top,
-    before importing jax/hydrologeez (`# noqa: E402` on the post-env imports).
+Warmup is a separate forcing container with the same batch size and may be empty.
+Its transitions run under `torch.no_grad()` and its final state is detached before
+the main period creates its own graph. `warmup_parameters` may be supplied
+separately; otherwise the resolved main parameters are reused.
 
-One-line fix if you see the raise: run with `JAX_ENABLE_X64=1` set in the
-environment before import.
+## 6. Explicit parameters and calibration
 
-## 6. Tooling
+Registered `nn.Parameter` leaves are ordinary model state. Functional calibration
+must pass a complete explicit mapping without mutating the template model during
+objective evaluation. Scalar, per-basin, and per-basin/per-time mappings support
+spatial and time-varying parameterization.
 
-- `uv` only (`uv add` / `uv sync` / `uv run`). No pip/poetry/conda.
-- `uv run ruff format` + `uv run ruff check` (lint), `uv run ty check` (types).
-- Modern typing: `list[str]`, `str | None`; no `typing.List`/`Optional`.
-- Tests use library assertions (`numpy.testing.assert_allclose`, works on JAX
-  arrays via `np.asarray`).
-- Every commit bumps the patch version (`uv run bump-my-version bump patch`) and is
-  tagged `v$(uv run bump-my-version show current_version)`.
+`calibrate_gradient` from `hydrologeez.calibration` uses a bounded sigmoid
+transform, explicit mappings, `torch.optim`, and optional SSM warmup forcing. It
+returns a calibrated model and detached loss history. Evolutionary GA/NSGA-II
+keeps ctrl-freak's NumPy population/results boundary but evaluates each population
+in one batched Torch call under `torch.no_grad()`. Its integer `warmup` slices the
+objective period and is distinct from SSM warmup forcing.
 
-## 7. HDX I/O contract
+## 7. Tooling and releases
 
-The model kernel remains format-agnostic. Core hydrologeez imports and numerical
-model execution must not import `polars`; HDX dependencies are loaded only through
-the optional I/O entry points.
+- Use `uv` only; do not use pip, poetry, conda, or pip-tools.
+- Run `ruff` formatting/linting, `ty` type checking, and `pytest`.
+- Use modern typing (`list[str]`, `str | None`).
+- Use `numpy.testing` for NumPy leaves and `torch.testing.assert_close` for Torch
+  tensors; retain xarray and polars testing utilities for those objects.
+- Versions are bumped only in release commits through `bump-my-version`, never in
+  ordinary commits. Publishing and tags are created only by GitHub Releases/OIDC.
 
-HDX is role-opaque, so hydrologeez owns the vocabulary and roles for columns it
-understands. The default canonical dynamic fields are `precip`, `pet`, and `temp`
-as forcing fields and `streamflow` as the target. Foreign column names must be
-adapted through `Vocabulary` overrides instead of changing model forcing classes.
+## 8. HDX I/O
 
-`from_hdx` and `to_hdx` must round-trip hydrologeez streamflow predictions through
-HDX 0.2 scalar datasets. The writer emits string `basin_id` values, sorted
-`datetime64[us]` times, per-basin `scalar_dynamic.parquet`, root
-`scalar_static.parquet`, and a six-field manifest containing `format_version`,
-`name`, `created_at`, `producer_version`, `crs`, and `cadence`.
+The model core is format-agnostic. Optional Parquet dependencies load lazily
+through HDX entry points. HDX is role-opaque, so hydrologeez owns the canonical
+`precip`, `pet`, `temp`, and `streamflow` vocabulary and foreign-name overrides.
+
+`from_hdx` returns NumPy forcing-dictionary leaves, streamflow, statics, mask, and
+NumPy times. `.torch(dtype=..., device=...)` is the explicit bridge that constructs
+the selected model forcing dataclass and converts the mask to `torch.bool`.
+Padding and masks represent ragged multi-basin data. `to_hdx` must preserve the
+HDX 0.2 round-trip contract: string basin IDs, sorted `datetime64[us]` times,
+per-basin dynamic files, root statics, and the six-field manifest.
+
+## 9. hcx boundary
+
+Adapters in `hydrologeez.hcx` exist only for development conformance. They import
+hcx lazily during forecast creation, consume only `scalar_dynamic`, and preserve
+point metadata. Do not import them from the default package path or expose package
+entry points. hydrologeez must not register an `hcx.models` plugin.
