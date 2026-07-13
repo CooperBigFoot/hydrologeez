@@ -58,6 +58,29 @@ class HBVFluxes:
     streamflow: torch.Tensor
 
 
+@dataclass(frozen=True)
+class _HBVPreRouting:
+    precip: torch.Tensor
+    temp: torch.Tensor
+    pet: torch.Tensor
+    precip_rain: torch.Tensor
+    precip_snow: torch.Tensor
+    snow_pack: torch.Tensor
+    snow_melt: torch.Tensor
+    liquid_water_in_snow: torch.Tensor
+    snow_input: torch.Tensor
+    soil_moisture: torch.Tensor
+    recharge: torch.Tensor
+    actual_et: torch.Tensor
+    upper_zone: torch.Tensor
+    lower_zone: torch.Tensor
+    q0: torch.Tensor
+    q1: torch.Tensor
+    q2: torch.Tensor
+    percolation: torch.Tensor
+    qgw: torch.Tensor
+
+
 class HBVModel(StateSpaceModel):
     """Single-zone, 14-parameter daily HBV-Light model."""
 
@@ -144,12 +167,12 @@ class HBVModel(StateSpaceModel):
             routing_buffer=zone_sm.new_zeros((batch_size, self.routing_buffer_size)),
         )
 
-    def transition(
+    def _pre_routing(
         self,
         state: HBVState,
         forcing: HBVForcing,
         parameters: Mapping[str, torch.Tensor],
-    ) -> tuple[HBVState, HBVFluxes]:
+    ) -> _HBVPreRouting:
         precip = forcing.precip
         pet = forcing.pet
         temp = forcing.temp
@@ -173,17 +196,7 @@ class HBVModel(StateSpaceModel):
             recharge_total,
             parameters,
         )
-        qsim, new_buffer = self.routing(state.routing_buffer, qgw, parameters)
-
-        new_state = HBVState(
-            zone_sp=new_sp,
-            zone_lw=new_lw,
-            zone_sm=new_sm,
-            upper_zone=new_suz,
-            lower_zone=new_slz,
-            routing_buffer=new_buffer,
-        )
-        fluxes = HBVFluxes(
+        return _HBVPreRouting(
             precip=precip,
             temp=temp,
             pet=pet,
@@ -203,6 +216,57 @@ class HBVModel(StateSpaceModel):
             q2=q2,
             percolation=perc,
             qgw=qgw,
+        )
+
+    def _apply_routing(
+        self,
+        qgw: torch.Tensor,
+        routing_state: torch.Tensor,
+        parameters: Mapping[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.routing(routing_state, qgw, parameters)
+
+    def transition(
+        self,
+        state: HBVState,
+        forcing: HBVForcing,
+        parameters: Mapping[str, torch.Tensor],
+    ) -> tuple[HBVState, HBVFluxes]:
+        pre_routing = self._pre_routing(state, forcing, parameters)
+        qsim, new_buffer = self._apply_routing(
+            pre_routing.qgw,
+            state.routing_buffer,
+            parameters,
+        )
+
+        new_state = HBVState(
+            zone_sp=pre_routing.snow_pack,
+            zone_lw=pre_routing.liquid_water_in_snow,
+            zone_sm=pre_routing.soil_moisture,
+            upper_zone=pre_routing.upper_zone,
+            lower_zone=pre_routing.lower_zone,
+            routing_buffer=new_buffer,
+        )
+        fluxes = HBVFluxes(
+            precip=pre_routing.precip,
+            temp=pre_routing.temp,
+            pet=pre_routing.pet,
+            precip_rain=pre_routing.precip_rain,
+            precip_snow=pre_routing.precip_snow,
+            snow_pack=pre_routing.snow_pack,
+            snow_melt=pre_routing.snow_melt,
+            liquid_water_in_snow=pre_routing.liquid_water_in_snow,
+            snow_input=pre_routing.snow_input,
+            soil_moisture=pre_routing.soil_moisture,
+            recharge=pre_routing.recharge,
+            actual_et=pre_routing.actual_et,
+            upper_zone=pre_routing.upper_zone,
+            lower_zone=pre_routing.lower_zone,
+            q0=pre_routing.q0,
+            q1=pre_routing.q1,
+            q2=pre_routing.q2,
+            percolation=pre_routing.percolation,
+            qgw=pre_routing.qgw,
             streamflow=qsim,
         )
         return new_state, fluxes
