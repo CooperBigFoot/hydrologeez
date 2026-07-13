@@ -1,3 +1,4 @@
+import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import FrozenInstanceError, fields
 from pathlib import Path
@@ -15,9 +16,14 @@ from hydrologeez.models.hbv import (
     PhysicalRoutingProcess,
     PhysicalSnowProcess,
     PhysicalSoilProcess,
+    ResponseProcess,
+    RoutingProcess,
+    SnowProcess,
+    SoilProcess,
     processes,
 )
 from hydrologeez.models.hbv.state import HBVState
+from hydrologeez.processes import Process
 
 GOLDEN = Path(__file__).parent / "golden" / "hbv.npz"
 PARAM_NAMES = ("tt", "cfmax", "sfcf", "cwh", "cfr", "fc", "lp", "beta", "k0", "k1", "k2", "perc", "uzl", "maxbas")
@@ -64,7 +70,7 @@ def _slot_forcing() -> HBVForcing:
     )
 
 
-class NoRechargeSoil(nn.Module):
+class NoRechargeSoil(SoilProcess):
     def forward(
         self,
         soil_input: torch.Tensor,
@@ -75,6 +81,42 @@ class NoRechargeSoil(nn.Module):
         del soil_input, pet, parameters
         zeros = torch.zeros_like(soil_moisture)
         return soil_moisture, zeros, zeros
+
+
+def test_process_slot_contracts() -> None:
+    contracts = (SnowProcess, SoilProcess, ResponseProcess, RoutingProcess)
+    physical = (PhysicalSnowProcess, PhysicalSoilProcess, PhysicalResponseProcess, PhysicalRoutingProcess)
+
+    for contract, implementation in zip(contracts, physical, strict=True):
+        assert inspect.isabstract(contract)
+        assert issubclass(contract, Process)
+        assert implementation.__bases__ == (contract,)
+        assert implementation.introduces == {}
+
+
+def test_process_introduces_preserves_insertion_order() -> None:
+    class OrderedProcess(Process):
+        introduces = {"second": (-1.0, 1.0), "first": (0.0, 2.0)}
+
+    assert tuple(OrderedProcess.introduces) == ("second", "first")
+
+
+@pytest.mark.parametrize(
+    ("introduces", "exception", "message"),
+    [
+        ([], TypeError, "introduces must be an insertion-ordered dict"),
+        ({"": (0.0, 1.0)}, ValueError, "introduced parameter names must be non-empty strings"),
+        ({"x": [0.0, 1.0]}, ValueError, "bounds for 'x' must be a \\(low, high\\) tuple"),
+        ({"x": (0.0,)}, ValueError, "bounds for 'x' must be a \\(low, high\\) tuple"),
+        ({"x": (float("nan"), 1.0)}, ValueError, "bounds for 'x' must be finite numbers"),
+        ({"x": (0.0, float("inf"))}, ValueError, "bounds for 'x' must be finite numbers"),
+        ({"x": (1.0, 1.0)}, ValueError, "bounds for 'x' must satisfy low < high"),
+        ({"x": (2.0, 1.0)}, ValueError, "bounds for 'x' must satisfy low < high"),
+    ],
+)
+def test_process_introduces_validation(introduces: object, exception: type[Exception], message: str) -> None:
+    with pytest.raises(exception, match=message):
+        type("InvalidProcess", (Process,), {"introduces": introduces})
 
 
 def test_physical_slots_are_registered_parameterless_and_match_explicit_defaults() -> None:

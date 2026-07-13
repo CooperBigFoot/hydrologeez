@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from abc import abstractmethod
 from collections.abc import Mapping
 
 import torch
-from torch import nn
 
 from hydrologeez.convolution import convolve_delay_line
+from hydrologeez.processes import Process
 
 from .constants import ROUTING_BUFFER_SIZE
 
@@ -147,7 +148,70 @@ def convolve_routing(
     return convolve_delay_line(buffer, weights, qgw)
 
 
-class PhysicalSnowProcess(nn.Module):
+class SnowProcess(Process):
+    @abstractmethod
+    def forward(
+        self,
+        precip: torch.Tensor,
+        temp: torch.Tensor,
+        snow_pack: torch.Tensor,
+        liquid_water: torch.Tensor,
+        parameters: Mapping[str, torch.Tensor],
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        raise NotImplementedError
+
+
+class SoilProcess(Process):
+    @abstractmethod
+    def forward(
+        self,
+        soil_input: torch.Tensor,
+        pet: torch.Tensor,
+        soil_moisture: torch.Tensor,
+        parameters: Mapping[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        raise NotImplementedError
+
+
+class ResponseProcess(Process):
+    @abstractmethod
+    def forward(
+        self,
+        upper_zone: torch.Tensor,
+        lower_zone: torch.Tensor,
+        recharge: torch.Tensor,
+        parameters: Mapping[str, torch.Tensor],
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        raise NotImplementedError
+
+
+class RoutingProcess(Process):
+    @abstractmethod
+    def forward(
+        self,
+        routing_buffer: torch.Tensor,
+        groundwater_runoff: torch.Tensor,
+        parameters: Mapping[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        raise NotImplementedError
+
+
+class PhysicalSnowProcess(SnowProcess):
     def forward(
         self,
         precip: torch.Tensor,
@@ -184,7 +248,7 @@ class PhysicalSnowProcess(nn.Module):
         return p_rain, p_snow, new_sp, melt, new_lw, snow_input
 
 
-class PhysicalSoilProcess(nn.Module):
+class PhysicalSoilProcess(SoilProcess):
     def forward(
         self,
         soil_input: torch.Tensor,
@@ -205,7 +269,7 @@ class PhysicalSoilProcess(nn.Module):
         return new_sm, recharge_total, et_act
 
 
-class PhysicalResponseProcess(nn.Module):
+class PhysicalResponseProcess(ResponseProcess):
     def forward(
         self,
         upper_zone: torch.Tensor,
@@ -230,7 +294,7 @@ class PhysicalResponseProcess(nn.Module):
         return new_suz, new_slz, q0, q1, q2, perc, qgw
 
 
-class PhysicalRoutingProcess(nn.Module):
+class PhysicalRoutingProcess(RoutingProcess):
     def forward(
         self,
         routing_buffer: torch.Tensor,

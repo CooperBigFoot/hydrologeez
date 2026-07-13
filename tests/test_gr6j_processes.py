@@ -1,13 +1,13 @@
 """Golden trajectory tests for the Torch GR6J process boundary."""
 
+import inspect
 from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
-from torch import nn
 
-from hydrologeez.models.gr6j import GR6J, GR6JForcing
+from hydrologeez.models.gr6j import GR6J, GR6JForcing, ProductionProcess, ResponseProcess, RoutingProcess
 from hydrologeez.models.gr6j.constants import B, C, D
 from hydrologeez.models.gr6j.processes import (
     PhysicalProduction,
@@ -25,11 +25,12 @@ from hydrologeez.models.gr6j.processes import (
     routing_store_update,
 )
 from hydrologeez.models.gr6j.state import State
+from hydrologeez.processes import Process
 
 GOLDEN = Path(__file__).parent / "golden" / "gr6j.npz"
 
 
-class _ZeroProduction(nn.Module):
+class _ZeroProduction(ProductionProcess):
     def forward(
         self,
         precip: torch.Tensor,
@@ -47,6 +48,17 @@ class _ZeroProduction(nn.Module):
         del pet, x1
         zero = torch.zeros_like(precip)
         return production_store, zero, zero, zero, zero, zero
+
+
+def test_process_slot_contracts() -> None:
+    contracts = (ProductionProcess, RoutingProcess, ResponseProcess)
+    physical = (PhysicalProduction, PhysicalRouting, PhysicalResponse)
+
+    for contract, implementation in zip(contracts, physical, strict=True):
+        assert inspect.isabstract(contract)
+        assert issubclass(contract, Process)
+        assert implementation.__bases__ == (contract,)
+        assert implementation.introduces == {}
 
 
 @pytest.fixture(scope="module")
