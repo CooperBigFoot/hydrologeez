@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from typing import ClassVar
 
 import torch
 
 from hydrologeez.convolution import convolve_delay_line
-from hydrologeez.processes import Process
+from hydrologeez.processes import ParameterBounds, Process
 
 from .constants import EXP_BRANCH_THRESHOLD, MAX_EXP_ARG, MAX_TANH_ARG, NH, PERC_CONSTANT, B, C, D
 
@@ -187,6 +188,10 @@ class ResponseProcess(Process):
 class PhysicalProduction(ProductionProcess):
     """Physical GR6J production and percolation processes."""
 
+    introduces: ClassVar[dict[str, ParameterBounds]] = {
+        "x1": (1.0, 2500.0),
+    }
+
     def forward(
         self,
         precip: torch.Tensor,
@@ -221,6 +226,10 @@ class PhysicalProduction(ProductionProcess):
 class PhysicalRouting(RoutingProcess):
     """Physical GR6J unit-hydrograph routing processes."""
 
+    introduces: ClassVar[dict[str, ParameterBounds]] = {
+        "x4": (0.5, 10.0),
+    }
+
     def forward(
         self,
         uh1_state: torch.Tensor,
@@ -236,6 +245,13 @@ class PhysicalRouting(RoutingProcess):
 
 class PhysicalResponse(ResponseProcess):
     """Physical GR6J routing, exponential, and direct response processes."""
+
+    introduces: ClassVar[dict[str, ParameterBounds]] = {
+        "x2": (-5.0, 5.0),
+        "x3": (1.0, 1000.0),
+        "x5": (-4.0, 4.0),
+        "x6": (1.0, 50.0),
+    }
 
     def forward(
         self,

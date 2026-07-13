@@ -10,6 +10,7 @@ from torch import nn
 
 from hydrologeez.models.gr6j import constants, processes
 from hydrologeez.models.gr6j.state import State
+from hydrologeez.processes import ParameterBounds
 from hydrologeez.ssm import StateSpaceModel
 
 
@@ -60,9 +61,9 @@ class GR6J(StateSpaceModel):
         x6: torch.Tensor,
         nh: int = constants.NH,
         *,
-        production: nn.Module | None = None,
-        routing: nn.Module | None = None,
-        response: nn.Module | None = None,
+        production: processes.ProductionProcess | None = None,
+        routing: processes.RoutingProcess | None = None,
+        response: processes.ResponseProcess | None = None,
     ) -> None:
         super().__init__()
         self.x1 = nn.Parameter(x1)
@@ -75,6 +76,15 @@ class GR6J(StateSpaceModel):
         self.routing = processes.PhysicalRouting() if routing is None else routing
         self.response = processes.PhysicalResponse() if response is None else response
         self.nh = nh
+
+    @property
+    def parameter_bounds(self) -> dict[str, ParameterBounds]:
+        """Return bounds declared by installed processes in slot order."""
+        return {
+            name: bounds
+            for process in (self.production, self.routing, self.response)
+            for name, bounds in process.introduces.items()
+        }
 
     def init_state(
         self,
