@@ -8,7 +8,13 @@ from dataclasses import dataclass
 import torch
 from torch import nn
 
-from hydrologeez.models.hbv import constants, processes
+from hydrologeez.models.hbv import constants
+from hydrologeez.models.hbv.processes import (
+    PhysicalResponseProcess,
+    PhysicalRoutingProcess,
+    PhysicalSnowProcess,
+    PhysicalSoilProcess,
+)
 from hydrologeez.models.hbv.state import HBVState
 from hydrologeez.ssm import StateSpaceModel
 
@@ -71,6 +77,10 @@ class HBVModel(StateSpaceModel):
         perc: torch.Tensor,
         uzl: torch.Tensor,
         maxbas: torch.Tensor,
+        snow: nn.Module | None = None,
+        soil: nn.Module | None = None,
+        response: nn.Module | None = None,
+        routing: nn.Module | None = None,
     ) -> None:
         super().__init__()
         self.tt = nn.Parameter(tt)
@@ -87,6 +97,10 @@ class HBVModel(StateSpaceModel):
         self.perc = nn.Parameter(perc)
         self.uzl = nn.Parameter(uzl)
         self.maxbas = nn.Parameter(maxbas)
+        self.snow = PhysicalSnowProcess() if snow is None else snow
+        self.soil = PhysicalSoilProcess() if soil is None else soil
+        self.response = PhysicalResponseProcess() if response is None else response
+        self.routing = PhysicalRoutingProcess() if routing is None else routing
 
     def init_state(self, parameters: Mapping[str, torch.Tensor], *, batch_size: int) -> HBVState:
         """Initialize soil moisture to half of FC and every other store to zero."""
@@ -111,61 +125,26 @@ class HBVModel(StateSpaceModel):
         pet = forcing.pet
         temp = forcing.temp
 
-        uh_weights = processes.compute_triangular_weights(parameters["maxbas"])
-
-        p_rain, p_snow = processes.partition_precipitation(precip, temp, parameters["tt"], parameters["sfcf"])
-        melt = processes.compute_melt(temp, parameters["tt"], parameters["cfmax"], state.zone_sp)
-        refreeze = processes.compute_refreezing(
+        p_rain, p_snow, new_sp, melt, new_lw, snow_input = self.snow(
+            precip,
             temp,
-            parameters["tt"],
-            parameters["cfmax"],
-            parameters["cfr"],
-            state.zone_lw,
-        )
-        new_sp, new_lw, snow_outflow = processes.update_snow_pack(
             state.zone_sp,
             state.zone_lw,
-            p_snow,
-            melt,
-            refreeze,
-            parameters["cwh"],
+            parameters,
         )
-        snow_input = p_rain + snow_outflow
-
-        recharge = processes.compute_recharge(
+        new_sm, recharge_total, et_act = self.soil(
             snow_input,
-            state.zone_sm,
-            parameters["fc"],
-            parameters["beta"],
-        )
-        et_act = processes.compute_actual_et(
             pet,
             state.zone_sm,
-            parameters["fc"],
-            parameters["lp"],
+            parameters,
         )
-        new_sm, sm_overflow = processes.update_soil_moisture(
-            state.zone_sm,
-            snow_input,
-            recharge,
-            et_act,
-            parameters["fc"],
-        )
-        recharge_total = recharge + sm_overflow
-
-        q0, q1 = processes.upper_zone_outflows(
+        new_suz, new_slz, q0, q1, q2, perc, qgw = self.response(
             state.upper_zone,
-            parameters["k0"],
-            parameters["k1"],
-            parameters["uzl"],
+            state.lower_zone,
+            recharge_total,
+            parameters,
         )
-        perc = processes.compute_percolation(state.upper_zone, parameters["perc"])
-        new_suz = processes.update_upper_zone(state.upper_zone, recharge_total, q0, q1, perc)
-        q2 = processes.lower_zone_outflow(state.lower_zone, parameters["k2"])
-        new_slz = processes.update_lower_zone(state.lower_zone, perc, q2)
-        qgw = q0 + q1 + q2
-
-        qsim, new_buffer = processes.convolve_routing(state.routing_buffer, uh_weights, qgw)
+        qsim, new_buffer = self.routing(state.routing_buffer, qgw, parameters)
 
         new_state = HBVState(
             zone_sp=new_sp,

@@ -2,6 +2,10 @@
 
 from . import constants
 from .processes import (
+    PhysicalResponseProcess,
+    PhysicalRoutingProcess,
+    PhysicalSnowProcess,
+    PhysicalSoilProcess,
     compute_actual_et,
     compute_melt,
     compute_percolation,
@@ -21,6 +25,10 @@ from .state import HBVState
 
 __all__ = [
     "HBVState",
+    "PhysicalResponseProcess",
+    "PhysicalRoutingProcess",
+    "PhysicalSnowProcess",
+    "PhysicalSoilProcess",
     "compute_actual_et",
     "compute_melt",
     "compute_percolation",
