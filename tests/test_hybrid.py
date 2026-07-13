@@ -1,4 +1,4 @@
-from dataclasses import replace
+from dataclasses import fields, replace
 
 import pytest
 import torch
@@ -11,7 +11,7 @@ from hydrologeez.hybrid import (
     select_features,
     select_network_inputs,
 )
-from hydrologeez.models.hbv import HBVForcing, HBVModel
+from hydrologeez.models.hbv import HBVFluxes, HBVForcing, HBVModel, HBVState
 
 
 def _model() -> HBVModel:
@@ -61,6 +61,145 @@ def _constant_time_parameters(
     parameters: dict[str, torch.Tensor], batch_size: int, time_steps: int
 ) -> dict[str, torch.Tensor]:
     return {name: value.expand(batch_size, time_steps).clone() for name, value in parameters.items()}
+
+
+def _pre_refactor_hbv_transition(
+    model: HBVModel,
+    state: HBVState,
+    forcing: HBVForcing,
+    parameters: dict[str, torch.Tensor],
+) -> tuple[HBVState, HBVFluxes]:
+    precip = forcing.precip
+    pet = forcing.pet
+    temp = forcing.temp
+
+    p_rain, p_snow, new_sp, melt, new_lw, snow_input = model.snow(
+        precip,
+        temp,
+        state.zone_sp,
+        state.zone_lw,
+        parameters,
+    )
+    new_sm, recharge_total, et_act = model.soil(
+        snow_input,
+        pet,
+        state.zone_sm,
+        parameters,
+    )
+    new_suz, new_slz, q0, q1, q2, perc, qgw = model.response(
+        state.upper_zone,
+        state.lower_zone,
+        recharge_total,
+        parameters,
+    )
+    qsim, new_buffer = model.routing(state.routing_buffer, qgw, parameters)
+
+    new_state = HBVState(
+        zone_sp=new_sp,
+        zone_lw=new_lw,
+        zone_sm=new_sm,
+        upper_zone=new_suz,
+        lower_zone=new_slz,
+        routing_buffer=new_buffer,
+    )
+    fluxes = HBVFluxes(
+        precip=precip,
+        temp=temp,
+        pet=pet,
+        precip_rain=p_rain,
+        precip_snow=p_snow,
+        snow_pack=new_sp,
+        snow_melt=melt,
+        liquid_water_in_snow=new_lw,
+        snow_input=snow_input,
+        soil_moisture=new_sm,
+        recharge=recharge_total,
+        actual_et=et_act,
+        upper_zone=new_suz,
+        lower_zone=new_slz,
+        q0=q0,
+        q1=q1,
+        q2=q2,
+        percolation=perc,
+        qgw=qgw,
+        streamflow=qsim,
+    )
+    return new_state, fluxes
+
+
+def test_hbv_transition_internal_stages_match_pre_refactor_transition() -> None:
+    model = _model()
+    parameters = _per_basin_parameters(_scalar_parameters(model), batch_size=2)
+    parameters["fc"] = torch.tensor([90.0, 120.0], dtype=torch.float64)
+    parameters["maxbas"] = torch.tensor([2.5, 4.5], dtype=torch.float64)
+    state = HBVState(
+        zone_sp=torch.tensor([2.0, 1.0], dtype=torch.float64),
+        zone_lw=torch.tensor([0.2, 0.1], dtype=torch.float64),
+        zone_sm=torch.tensor([40.0, 80.0], dtype=torch.float64),
+        upper_zone=torch.tensor([5.0, 3.0], dtype=torch.float64),
+        lower_zone=torch.tensor([7.0, 9.0], dtype=torch.float64),
+        routing_buffer=torch.tensor(
+            [
+                [0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1],
+                [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
+            ],
+            dtype=torch.float64,
+        ),
+    )
+    main = _main_forcing()
+    forcing = HBVForcing(
+        precip=main.precip[:, 0],
+        pet=main.pet[:, 0],
+        temp=main.temp[:, 0],
+    )
+
+    expected_state, expected_fluxes = _pre_refactor_hbv_transition(
+        model,
+        state,
+        forcing,
+        parameters,
+    )
+    actual_state, actual_fluxes = model.transition(state, forcing, parameters)
+    pre_routing = model._pre_routing(state, forcing, parameters)
+    staged_streamflow, staged_routing_buffer = model._apply_routing(
+        pre_routing.qgw,
+        state.routing_buffer,
+        parameters,
+    )
+
+    for field in fields(HBVState):
+        torch.testing.assert_close(
+            getattr(actual_state, field.name),
+            getattr(expected_state, field.name),
+            rtol=1e-12,
+            atol=1e-12,
+        )
+    for field in fields(HBVFluxes):
+        torch.testing.assert_close(
+            getattr(actual_fluxes, field.name),
+            getattr(expected_fluxes, field.name),
+            rtol=1e-12,
+            atol=1e-12,
+        )
+        if field.name != "streamflow":
+            torch.testing.assert_close(
+                getattr(pre_routing, field.name),
+                getattr(expected_fluxes, field.name),
+                rtol=1e-12,
+                atol=1e-12,
+            )
+    torch.testing.assert_close(
+        staged_streamflow,
+        expected_fluxes.streamflow,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    torch.testing.assert_close(
+        staged_routing_buffer,
+        expected_state.routing_buffer,
+        rtol=1e-12,
+        atol=1e-12,
+    )
 
 
 def test_hbv_run_accepts_time_varying_parameters_during_warmup() -> None:
