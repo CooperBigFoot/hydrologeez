@@ -29,7 +29,7 @@ def _gr6j(theta: torch.Tensor) -> GR6J:
 
 
 def _hbv(theta: torch.Tensor) -> HBVModel:
-    return HBVModel(**dict(zip(HBV_SPEC.names, theta, strict=True)))
+    return HBVModel(**dict(zip(HBV_SPEC.names, theta, strict=True)))  # ty: ignore[invalid-argument-type, unused-ignore-comment]
 
 
 def _gr6j_forcing(steps: int, *, requires_grad: bool = False) -> GR6JForcing:

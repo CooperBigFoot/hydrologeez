@@ -5,9 +5,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+from torch import nn
 
+from hydrologeez.models.gr6j import GR6J, GR6JForcing
 from hydrologeez.models.gr6j.constants import B, C, D
 from hydrologeez.models.gr6j.processes import (
+    PhysicalProduction,
+    PhysicalResponse,
+    PhysicalRouting,
     _ss1,
     _ss2,
     compute_uh_ordinates,
@@ -22,6 +27,26 @@ from hydrologeez.models.gr6j.processes import (
 from hydrologeez.models.gr6j.state import State
 
 GOLDEN = Path(__file__).parent / "golden" / "gr6j.npz"
+
+
+class _ZeroProduction(nn.Module):
+    def forward(
+        self,
+        precip: torch.Tensor,
+        pet: torch.Tensor,
+        production_store: torch.Tensor,
+        x1: torch.Tensor,
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        del pet, x1
+        zero = torch.zeros_like(precip)
+        return production_store, zero, zero, zero, zero, zero
 
 
 @pytest.fixture(scope="module")
@@ -69,6 +94,137 @@ def close(actual, expected):
         rtol=1e-12,
         atol=1e-12,
     )
+
+
+def test_default_slots_match_free_function_assembly(data):
+    forcing, parameter = scenarios(data)
+    precip = forcing("forcing.precip")
+    pet = forcing("forcing.pet")
+    old_production_store = previous(data, "production_store")
+
+    s_after_ps, actual_et, net_rainfall_pn, effective_rainfall_pr = production_store_update(
+        precip, pet, old_production_store, parameter(0)
+    )
+    storage_infiltration = net_rainfall_pn - effective_rainfall_pr
+    s_after_perc, percolation_amount = percolation(s_after_ps, parameter(0))
+    total_effective_rainfall = effective_rainfall_pr + percolation_amount
+    expected_production = (
+        s_after_perc,
+        actual_et,
+        net_rainfall_pn,
+        storage_infiltration,
+        percolation_amount,
+        total_effective_rainfall,
+    )
+    actual_production = PhysicalProduction()(precip, pet, old_production_store, parameter(0))
+    for actual, expected in zip(actual_production, expected_production, strict=True):
+        close(actual, expected)
+
+    uh1_ord, uh2_ord = compute_uh_ordinates(parameter(3))
+    q9, uh1 = convolve_uh(previous(data, "uh1"), uh1_ord, B * total_effective_rainfall)
+    q1, uh2 = convolve_uh(previous(data, "uh2"), uh2_ord, (1.0 - B) * total_effective_rainfall)
+    expected_routing = (q9, q1, uh1, uh2)
+    actual_routing = PhysicalRouting()(
+        previous(data, "uh1"),
+        previous(data, "uh2"),
+        total_effective_rainfall,
+        parameter(3),
+    )
+    for actual, expected in zip(actual_routing, expected_routing, strict=True):
+        close(actual, expected)
+
+    old_routing_store = previous(data, "routing_store")
+    old_exponential_store = previous(data, "exponential_store")
+    exchange_f = groundwater_exchange(old_routing_store, parameter(1), parameter(2), parameter(4))
+    new_routing_store, qr, actual_exchange_routing = routing_store_update(
+        old_routing_store, (1.0 - C) * q9, exchange_f, parameter(2)
+    )
+    new_exp_store, qrexp = exponential_store_update(old_exponential_store, C * q9, exchange_f, parameter(5))
+    qd, actual_exchange_direct = direct_branch(q1, exchange_f)
+    streamflow = torch.clamp_min(qr + qrexp + qd, 0.0)
+    actual_exchange_total = actual_exchange_routing + actual_exchange_direct + exchange_f
+    expected_response = (
+        new_routing_store,
+        qr,
+        actual_exchange_routing,
+        new_exp_store,
+        qrexp,
+        qd,
+        actual_exchange_direct,
+        exchange_f,
+        streamflow,
+        actual_exchange_total,
+    )
+    actual_response = PhysicalResponse()(
+        old_routing_store,
+        old_exponential_store,
+        q9,
+        q1,
+        parameter(1),
+        parameter(2),
+        parameter(4),
+        parameter(5),
+    )
+    for actual, expected in zip(actual_response, expected_response, strict=True):
+        close(actual, expected)
+
+
+def test_injected_production_slot_changes_run_behavior():
+    default_x1 = torch.tensor(350.0, dtype=torch.float64)
+    default_x2 = torch.tensor(-1.2, dtype=torch.float64)
+    default_x3 = torch.tensor(90.0, dtype=torch.float64)
+    default_x4 = torch.tensor(2.4, dtype=torch.float64)
+    default_x5 = torch.tensor(0.15, dtype=torch.float64)
+    default_x6 = torch.tensor(12.0, dtype=torch.float64)
+    injected_x1 = torch.tensor(350.0, dtype=torch.float64)
+    injected_x2 = torch.tensor(-1.2, dtype=torch.float64)
+    injected_x3 = torch.tensor(90.0, dtype=torch.float64)
+    injected_x4 = torch.tensor(2.4, dtype=torch.float64)
+    injected_x5 = torch.tensor(0.15, dtype=torch.float64)
+    injected_x6 = torch.tensor(12.0, dtype=torch.float64)
+    forcing = GR6JForcing(
+        precip=torch.tensor([[0.0, 5.0, 20.0, 3.0, 12.0, 0.0]], dtype=torch.float64),
+        pet=torch.tensor([[2.0, 1.0, 0.5, 3.0, 1.5, 4.0]], dtype=torch.float64),
+    )
+    replacement = _ZeroProduction()
+    default = GR6J(
+        default_x1,
+        default_x2,
+        default_x3,
+        default_x4,
+        default_x5,
+        default_x6,
+        20,
+    )
+    injected = GR6J(
+        injected_x1,
+        injected_x2,
+        injected_x3,
+        injected_x4,
+        injected_x5,
+        injected_x6,
+        20,
+        production=replacement,
+    )
+
+    default_streamflow, default_fluxes, _ = default.run(forcing, return_fluxes=True)
+    injected_streamflow, injected_fluxes, _ = injected.run(forcing, return_fluxes=True)
+
+    assert injected.production is replacement
+    assert injected.nh == 20
+    torch.testing.assert_close(
+        injected_fluxes.effective_rainfall,
+        torch.zeros_like(injected_fluxes.effective_rainfall),
+        rtol=0.0,
+        atol=0.0,
+    )
+    assert not torch.allclose(
+        default_fluxes.effective_rainfall,
+        injected_fluxes.effective_rainfall,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    assert not torch.allclose(default_streamflow, injected_streamflow, rtol=1e-12, atol=1e-12)
 
 
 def test_state_round_trip_and_validation(data):

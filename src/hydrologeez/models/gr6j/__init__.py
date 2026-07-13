@@ -2,6 +2,9 @@
 
 from . import constants
 from .processes import (
+    PhysicalProduction,
+    PhysicalResponse,
+    PhysicalRouting,
     compute_uh_ordinates,
     convolve_uh,
     direct_branch,
@@ -14,6 +17,9 @@ from .processes import (
 from .state import State
 
 __all__ = [
+    "PhysicalProduction",
+    "PhysicalResponse",
+    "PhysicalRouting",
     "State",
     "compute_uh_ordinates",
     "constants",

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import torch
+from torch import nn
 
 from hydrologeez.convolution import convolve_delay_line
 
@@ -142,3 +145,97 @@ def convolve_routing(
     buffer: torch.Tensor, weights: torch.Tensor, qgw: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
     return convolve_delay_line(buffer, weights, qgw)
+
+
+class PhysicalSnowProcess(nn.Module):
+    def forward(
+        self,
+        precip: torch.Tensor,
+        temp: torch.Tensor,
+        snow_pack: torch.Tensor,
+        liquid_water: torch.Tensor,
+        parameters: Mapping[str, torch.Tensor],
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        p_rain, p_snow = partition_precipitation(precip, temp, parameters["tt"], parameters["sfcf"])
+        melt = compute_melt(temp, parameters["tt"], parameters["cfmax"], snow_pack)
+        refreeze = compute_refreezing(
+            temp,
+            parameters["tt"],
+            parameters["cfmax"],
+            parameters["cfr"],
+            liquid_water,
+        )
+        new_sp, new_lw, snow_outflow = update_snow_pack(
+            snow_pack,
+            liquid_water,
+            p_snow,
+            melt,
+            refreeze,
+            parameters["cwh"],
+        )
+        snow_input = p_rain + snow_outflow
+        return p_rain, p_snow, new_sp, melt, new_lw, snow_input
+
+
+class PhysicalSoilProcess(nn.Module):
+    def forward(
+        self,
+        soil_input: torch.Tensor,
+        pet: torch.Tensor,
+        soil_moisture: torch.Tensor,
+        parameters: Mapping[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        recharge = compute_recharge(soil_input, soil_moisture, parameters["fc"], parameters["beta"])
+        et_act = compute_actual_et(pet, soil_moisture, parameters["fc"], parameters["lp"])
+        new_sm, sm_overflow = update_soil_moisture(
+            soil_moisture,
+            soil_input,
+            recharge,
+            et_act,
+            parameters["fc"],
+        )
+        recharge_total = recharge + sm_overflow
+        return new_sm, recharge_total, et_act
+
+
+class PhysicalResponseProcess(nn.Module):
+    def forward(
+        self,
+        upper_zone: torch.Tensor,
+        lower_zone: torch.Tensor,
+        recharge: torch.Tensor,
+        parameters: Mapping[str, torch.Tensor],
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        q0, q1 = upper_zone_outflows(upper_zone, parameters["k0"], parameters["k1"], parameters["uzl"])
+        perc = compute_percolation(upper_zone, parameters["perc"])
+        new_suz = update_upper_zone(upper_zone, recharge, q0, q1, perc)
+        q2 = lower_zone_outflow(lower_zone, parameters["k2"])
+        new_slz = update_lower_zone(lower_zone, perc, q2)
+        qgw = q0 + q1 + q2
+        return new_suz, new_slz, q0, q1, q2, perc, qgw
+
+
+class PhysicalRoutingProcess(nn.Module):
+    def forward(
+        self,
+        routing_buffer: torch.Tensor,
+        groundwater_runoff: torch.Tensor,
+        parameters: Mapping[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        uh_weights = compute_triangular_weights(parameters["maxbas"])
+        return convolve_routing(routing_buffer, uh_weights, groundwater_runoff)
