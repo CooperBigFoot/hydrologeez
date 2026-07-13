@@ -1,4 +1,6 @@
-from dataclasses import replace
+import copy
+from dataclasses import fields, replace
+from typing import Any, cast
 
 import pytest
 import torch
@@ -11,7 +13,8 @@ from hydrologeez.hybrid import (
     select_features,
     select_network_inputs,
 )
-from hydrologeez.models.hbv import HBVForcing, HBVModel
+from hydrologeez.models.gr6j import GR6J
+from hydrologeez.models.hbv import HBVFluxes, HBVForcing, HBVModel, HBVState
 
 
 def _model() -> HBVModel:
@@ -61,6 +64,277 @@ def _constant_time_parameters(
     parameters: dict[str, torch.Tensor], batch_size: int, time_steps: int
 ) -> dict[str, torch.Tensor]:
     return {name: value.expand(batch_size, time_steps).clone() for name, value in parameters.items()}
+
+
+def _component_routing_oracles(
+    model: HBVModel,
+    forcing: HBVForcing,
+    parameters: dict[str, torch.Tensor],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    batch_size, n_components, time_steps = parameters["maxbas"].shape
+    flat_batch_size = batch_size * n_components
+    initial_parameters = {name: value[:, :, 0].reshape(flat_batch_size) for name, value in parameters.items()}
+    state = model.init_state(initial_parameters, batch_size=flat_batch_size)
+    shared_routing_buffer = state.routing_buffer.reshape(batch_size, n_components, model.routing_buffer_size)[:, 0, :]
+    independent_routing_buffer = state.routing_buffer
+    average_before: list[torch.Tensor] = []
+    average_after: list[torch.Tensor] = []
+
+    for time in range(time_steps):
+        step_parameters = {name: value[:, :, time] for name, value in parameters.items()}
+        flat_parameters = {name: value.reshape(flat_batch_size) for name, value in step_parameters.items()}
+        step_forcing = HBVForcing(
+            precip=forcing.precip[:, time, None].expand(batch_size, n_components).reshape(flat_batch_size),
+            pet=forcing.pet[:, time, None].expand(batch_size, n_components).reshape(flat_batch_size),
+            temp=forcing.temp[:, time, None].expand(batch_size, n_components).reshape(flat_batch_size),
+        )
+        pre_routing = model._pre_routing(state, step_forcing, flat_parameters)
+
+        mean_qgw = pre_routing.qgw.reshape(batch_size, n_components).mean(dim=1)
+        mean_routing_parameters = {name: step_parameters[name].mean(dim=1) for name in model.routing.introduces}
+        shared_streamflow, shared_routing_buffer = model._apply_routing(
+            mean_qgw,
+            shared_routing_buffer,
+            mean_routing_parameters,
+        )
+        component_streamflow, independent_routing_buffer = model._apply_routing(
+            pre_routing.qgw,
+            independent_routing_buffer,
+            flat_parameters,
+        )
+        average_before.append(shared_streamflow)
+        average_after.append(component_streamflow.reshape(batch_size, n_components).mean(dim=1))
+        state = HBVState(
+            zone_sp=pre_routing.snow_pack,
+            zone_lw=pre_routing.liquid_water_in_snow,
+            zone_sm=pre_routing.soil_moisture,
+            upper_zone=pre_routing.upper_zone,
+            lower_zone=pre_routing.lower_zone,
+            routing_buffer=independent_routing_buffer,
+        )
+
+    return torch.stack(average_before, dim=1), torch.stack(average_after, dim=1)
+
+
+def _pre_refactor_hbv_transition(
+    model: HBVModel,
+    state: HBVState,
+    forcing: HBVForcing,
+    parameters: dict[str, torch.Tensor],
+) -> tuple[HBVState, HBVFluxes]:
+    precip = forcing.precip
+    pet = forcing.pet
+    temp = forcing.temp
+
+    p_rain, p_snow, new_sp, melt, new_lw, snow_input = model.snow(
+        precip,
+        temp,
+        state.zone_sp,
+        state.zone_lw,
+        parameters,
+    )
+    new_sm, recharge_total, et_act = model.soil(
+        snow_input,
+        pet,
+        state.zone_sm,
+        parameters,
+    )
+    new_suz, new_slz, q0, q1, q2, perc, qgw = model.response(
+        state.upper_zone,
+        state.lower_zone,
+        recharge_total,
+        parameters,
+    )
+    qsim, new_buffer = model.routing(state.routing_buffer, qgw, parameters)
+
+    new_state = HBVState(
+        zone_sp=new_sp,
+        zone_lw=new_lw,
+        zone_sm=new_sm,
+        upper_zone=new_suz,
+        lower_zone=new_slz,
+        routing_buffer=new_buffer,
+    )
+    fluxes = HBVFluxes(
+        precip=precip,
+        temp=temp,
+        pet=pet,
+        precip_rain=p_rain,
+        precip_snow=p_snow,
+        snow_pack=new_sp,
+        snow_melt=melt,
+        liquid_water_in_snow=new_lw,
+        snow_input=snow_input,
+        soil_moisture=new_sm,
+        recharge=recharge_total,
+        actual_et=et_act,
+        upper_zone=new_suz,
+        lower_zone=new_slz,
+        q0=q0,
+        q1=q1,
+        q2=q2,
+        percolation=perc,
+        qgw=qgw,
+        streamflow=qsim,
+    )
+    return new_state, fluxes
+
+
+def test_hbv_run_components_singleton_is_exact_run_identity_with_warmup() -> None:
+    model = _model()
+    main = _main_forcing()
+    warmup = _warmup_forcing()
+    scalar = _scalar_parameters(model)
+    per_basin = _per_basin_parameters(scalar, batch_size=2)
+    main_time = _constant_time_parameters(scalar, batch_size=2, time_steps=3)
+    warmup_time = _constant_time_parameters(scalar, batch_size=2, time_steps=2)
+    main_time["fc"] = torch.tensor([[90.0, 100.0, 110.0], [105.0, 115.0, 125.0]], dtype=torch.float64)
+    main_time["maxbas"] = torch.tensor([[2.0, 2.5, 3.0], [4.0, 4.5, 5.0]], dtype=torch.float64)
+    warmup_time["fc"] = torch.tensor([[80.0, 85.0], [110.0, 120.0]], dtype=torch.float64)
+    warmup_time["maxbas"] = torch.tensor([[1.5, 2.0], [5.0, 5.5]], dtype=torch.float64)
+
+    for parameter_form in (scalar, per_basin, main_time):
+        expected = model.run(main, parameters=parameter_form)
+        actual = model.run_components(main, parameter_form, n_components=1)
+        assert torch.equal(actual, expected)
+        torch.testing.assert_close(actual, expected, rtol=1e-12, atol=1e-12)
+
+    full_main = {name: value[:, None, :] for name, value in main_time.items()}
+    full_warmup = {name: value[:, None, :] for name, value in warmup_time.items()}
+    expected_warmed = model.run(
+        main,
+        parameters=main_time,
+        warmup=warmup,
+        warmup_parameters=warmup_time,
+    )
+    actual_warmed = model.run_components(
+        main,
+        full_main,
+        n_components=1,
+        warmup=warmup,
+        warmup_parameters=full_warmup,
+    )
+    assert torch.equal(actual_warmed, expected_warmed)
+    torch.testing.assert_close(actual_warmed, expected_warmed, rtol=1e-12, atol=1e-12)
+
+    differentiable_main = {name: value.detach().clone().requires_grad_() for name, value in full_main.items()}
+    differentiable_warmup = {name: value.detach().clone().requires_grad_() for name, value in full_warmup.items()}
+    differentiable_output = model.run_components(
+        main,
+        differentiable_main,
+        n_components=1,
+        warmup=warmup,
+        warmup_parameters=differentiable_warmup,
+    )
+    differentiable_output.sum().backward()
+    assert all(value.grad is None for value in differentiable_warmup.values())
+    fc_gradient = differentiable_main["fc"].grad
+    assert fc_gradient is not None
+    assert torch.isfinite(fc_gradient).all()
+    assert torch.count_nonzero(fc_gradient) > 0
+
+
+def test_hbv_run_components_averages_qgw_before_one_shared_routing_step() -> None:
+    model = _model()
+    forcing = HBVForcing(
+        precip=torch.tensor([[8.0, 0.0, 12.0, 3.0, 0.0, 6.0, 1.0, 9.0]], dtype=torch.float64),
+        pet=torch.tensor([[0.4, 0.6, 0.5, 0.8, 0.7, 0.3, 0.5, 0.6]], dtype=torch.float64),
+        temp=torch.tensor([[-1.0, 2.0, 4.0, 1.0, 3.0, -0.5, 2.5, 5.0]], dtype=torch.float64),
+    )
+    batch_size = 1
+    n_components = 2
+    time_steps = forcing.precip.shape[1]
+    component_fraction = torch.tensor([[[0.3], [0.7]]], dtype=torch.float64)
+    parameters = {
+        name: (low + component_fraction * (high - low)).expand(batch_size, n_components, time_steps).clone()
+        for name, (low, high) in model.parameter_bounds.items()
+    }
+    assert all(not torch.equal(value[:, 0, :], value[:, 1, :]) for value in parameters.values())
+    assert not torch.equal(parameters["maxbas"][:, 0, :], parameters["maxbas"][:, 1, :])
+
+    actual = model.run_components(forcing, parameters, n_components=n_components)
+    average_before, average_after = _component_routing_oracles(model, forcing, parameters)
+
+    assert actual.shape == (batch_size, time_steps)
+    assert actual.dtype == forcing.precip.dtype
+    assert actual.device == forcing.precip.device
+    torch.testing.assert_close(actual, average_before, rtol=1e-12, atol=1e-12)
+    assert not torch.allclose(actual, average_after, rtol=1e-12, atol=1e-12)
+
+
+def test_hbv_transition_internal_stages_match_pre_refactor_transition() -> None:
+    model = _model()
+    parameters = _per_basin_parameters(_scalar_parameters(model), batch_size=2)
+    parameters["fc"] = torch.tensor([90.0, 120.0], dtype=torch.float64)
+    parameters["maxbas"] = torch.tensor([2.5, 4.5], dtype=torch.float64)
+    state = HBVState(
+        zone_sp=torch.tensor([2.0, 1.0], dtype=torch.float64),
+        zone_lw=torch.tensor([0.2, 0.1], dtype=torch.float64),
+        zone_sm=torch.tensor([40.0, 80.0], dtype=torch.float64),
+        upper_zone=torch.tensor([5.0, 3.0], dtype=torch.float64),
+        lower_zone=torch.tensor([7.0, 9.0], dtype=torch.float64),
+        routing_buffer=torch.tensor(
+            [
+                [0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1],
+                [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
+            ],
+            dtype=torch.float64,
+        ),
+    )
+    main = _main_forcing()
+    forcing = HBVForcing(
+        precip=main.precip[:, 0],
+        pet=main.pet[:, 0],
+        temp=main.temp[:, 0],
+    )
+
+    expected_state, expected_fluxes = _pre_refactor_hbv_transition(
+        model,
+        state,
+        forcing,
+        parameters,
+    )
+    actual_state, actual_fluxes = model.transition(state, forcing, parameters)
+    pre_routing = model._pre_routing(state, forcing, parameters)
+    staged_streamflow, staged_routing_buffer = model._apply_routing(
+        pre_routing.qgw,
+        state.routing_buffer,
+        parameters,
+    )
+
+    for field in fields(HBVState):
+        torch.testing.assert_close(
+            getattr(actual_state, field.name),
+            getattr(expected_state, field.name),
+            rtol=1e-12,
+            atol=1e-12,
+        )
+    for field in fields(HBVFluxes):
+        torch.testing.assert_close(
+            getattr(actual_fluxes, field.name),
+            getattr(expected_fluxes, field.name),
+            rtol=1e-12,
+            atol=1e-12,
+        )
+        if field.name != "streamflow":
+            torch.testing.assert_close(
+                getattr(pre_routing, field.name),
+                getattr(expected_fluxes, field.name),
+                rtol=1e-12,
+                atol=1e-12,
+            )
+    torch.testing.assert_close(
+        staged_streamflow,
+        expected_fluxes.streamflow,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    torch.testing.assert_close(
+        staged_routing_buffer,
+        expected_state.routing_buffer,
+        rtol=1e-12,
+        atol=1e-12,
+    )
 
 
 def test_hbv_run_accepts_time_varying_parameters_during_warmup() -> None:
@@ -427,3 +701,235 @@ def test_neural_parameter_forecast_model_trains_on_synthetic_batch() -> None:
     early_loss = sum(losses[:5]) / 5
     late_loss = sum(losses[-5:]) / 5
     assert late_loss < early_loss
+
+
+class _FixedComponentParameterNetwork(nn.Module):
+    def __init__(self, raw_components: torch.Tensor) -> None:
+        super().__init__()
+        self.raw_components = nn.Parameter(raw_components)
+        self.calls = 0
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        self.calls += 1
+        return self.raw_components.reshape(1, 1, -1).expand(inputs.shape[0], inputs.shape[1], -1)
+
+
+def test_neural_parameter_forecast_model_n1_is_exact_default_identity_with_warmup() -> None:
+    torch.manual_seed(1729)
+    batch = make_synthetic_batch(
+        batch_size=2,
+        input_length=7,
+        output_length=3,
+        scalar_dynamic_features=3,
+        scalar_static_features=1,
+        include_gridded_dynamic=False,
+        include_gridded_static=False,
+        dtype=torch.float64,
+        seed=1729,
+    )
+    hbv_default = _model()
+    hbv_explicit = _model()
+    network_default = _TimeVaryingParameterNetwork(4, len(hbv_default.parameter_bounds)).to(dtype=torch.float64)
+    network_explicit = copy.deepcopy(network_default)
+    default_model = NeuralParameterForecastModel(
+        hbv_default,
+        network_default,
+        dynamic_inputs=("precip", "pet", "temp"),
+        static_inputs=("area",),
+        physics_forcing={"precip": "precip", "pet": "pet", "temp": "temp"},
+        network_dynamic_inputs=("precip", "pet", "temp"),
+        network_static_inputs=("area",),
+        forcing_factory=HBVForcing,
+        output_specification=Point(),
+    )
+    explicit_model = NeuralParameterForecastModel(
+        hbv_explicit,
+        network_explicit,
+        dynamic_inputs=("precip", "pet", "temp"),
+        static_inputs=("area",),
+        physics_forcing={"precip": "precip", "pet": "pet", "temp": "temp"},
+        network_dynamic_inputs=("precip", "pet", "temp"),
+        network_static_inputs=("area",),
+        forcing_factory=HBVForcing,
+        output_specification=Point(),
+        n_components=1,
+    )
+
+    default_forecast = default_model(batch)
+    explicit_forecast = explicit_model(batch)
+
+    assert torch.equal(explicit_forecast.prediction, default_forecast.prediction)
+    torch.testing.assert_close(
+        explicit_forecast.prediction,
+        default_forecast.prediction,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    assert explicit_forecast.sample_ids is batch.metadata.sample_ids
+    assert explicit_forecast.input_end_indices is batch.metadata.input_end_indices
+    assert explicit_forecast.target_fill_mask is batch.metadata.target_fill_mask
+
+
+def test_neural_parameter_forecast_model_runs_distinct_components_average_before_routing() -> None:
+    batch = make_synthetic_batch(
+        batch_size=2,
+        input_length=8,
+        output_length=4,
+        scalar_dynamic_features=3,
+        scalar_static_features=1,
+        include_gridded_dynamic=False,
+        include_gridded_static=False,
+        dtype=torch.float64,
+        seed=1729,
+    )
+    scalar_dynamic = torch.tensor(
+        [
+            [
+                [8.0, 0.4, -1.0],
+                [2.0, 0.5, 2.0],
+                [0.0, 0.6, 4.0],
+                [6.0, 0.3, 1.0],
+                [3.0, 0.7, 3.0],
+                [9.0, 0.5, 5.0],
+                [1.0, 0.4, 2.0],
+                [5.0, 0.6, 4.0],
+            ],
+            [
+                [3.0, 0.3, 1.0],
+                [7.0, 0.6, -2.0],
+                [4.0, 0.5, 3.0],
+                [0.0, 0.8, 5.0],
+                [8.0, 0.4, 2.0],
+                [2.0, 0.7, 4.0],
+                [6.0, 0.5, 1.0],
+                [1.0, 0.3, 3.0],
+            ],
+        ],
+        dtype=torch.float64,
+    )
+    batch = replace(batch, scalar_dynamic=scalar_dynamic)
+    hbv = _model()
+    n_components = 2
+    parameter_width = len(hbv.parameter_bounds)
+    raw_components = torch.stack(
+        (
+            torch.full((parameter_width,), -1.5, dtype=torch.float64),
+            torch.full((parameter_width,), 1.5, dtype=torch.float64),
+        )
+    )
+    network = _FixedComponentParameterNetwork(raw_components)
+    model = NeuralParameterForecastModel(
+        hbv,
+        network,
+        dynamic_inputs=("precip", "pet", "temp"),
+        static_inputs=("area",),
+        physics_forcing={"precip": "precip", "pet": "pet", "temp": "temp"},
+        network_dynamic_inputs=("precip", "pet", "temp"),
+        network_static_inputs=("area",),
+        forcing_factory=HBVForcing,
+        output_specification=Point(),
+        n_components=n_components,
+    )
+
+    forecast = model(batch)
+
+    assert network.calls == 1
+    bounded = bounded_parameters(network.raw_components.detach(), hbv.parameter_bounds)
+    full_parameters = {
+        name: value[None, :, None].expand(batch.target.shape[0], n_components, scalar_dynamic.shape[1])
+        for name, value in bounded.items()
+    }
+    assert all(not torch.equal(value[:, 0, :], value[:, 1, :]) for value in full_parameters.values())
+    forcing = HBVForcing(
+        precip=scalar_dynamic[..., 0],
+        pet=scalar_dynamic[..., 1],
+        temp=scalar_dynamic[..., 2],
+    )
+    warmup_length = scalar_dynamic.shape[1] - batch.target.shape[1]
+    expected = hbv.run_components(
+        HBVForcing(
+            precip=forcing.precip[:, warmup_length:],
+            pet=forcing.pet[:, warmup_length:],
+            temp=forcing.temp[:, warmup_length:],
+        ),
+        {name: value[:, :, warmup_length:] for name, value in full_parameters.items()},
+        n_components=n_components,
+        warmup=HBVForcing(
+            precip=forcing.precip[:, :warmup_length],
+            pet=forcing.pet[:, :warmup_length],
+            temp=forcing.temp[:, :warmup_length],
+        ),
+        warmup_parameters={name: value[:, :, :warmup_length] for name, value in full_parameters.items()},
+    )
+    torch.testing.assert_close(forecast.prediction, expected, rtol=1e-12, atol=1e-12)
+    assert forecast.prediction.shape == batch.target.shape
+    assert forecast.sample_ids is batch.metadata.sample_ids
+    assert forecast.input_end_indices is batch.metadata.input_end_indices
+    assert forecast.target_fill_mask is batch.metadata.target_fill_mask
+
+    singleton_network = _FixedComponentParameterNetwork(raw_components[:1].clone())
+    singleton_model = NeuralParameterForecastModel(
+        _model(),
+        singleton_network,
+        dynamic_inputs=("precip", "pet", "temp"),
+        static_inputs=("area",),
+        physics_forcing={"precip": "precip", "pet": "pet", "temp": "temp"},
+        network_dynamic_inputs=("precip", "pet", "temp"),
+        network_static_inputs=("area",),
+        forcing_factory=HBVForcing,
+        output_specification=Point(),
+        n_components=1,
+    )
+    singleton = singleton_model(batch)
+    assert not torch.allclose(forecast.prediction, singleton.prediction, rtol=1e-12, atol=1e-12)
+
+    forecast.prediction.sum().backward()
+    gradient = network.raw_components.grad
+    assert gradient is not None
+    assert torch.isfinite(gradient).all()
+    assert torch.count_nonzero(gradient[0]) > 0
+    assert torch.count_nonzero(gradient[1]) > 0
+
+
+@pytest.mark.parametrize("n_components", [True, 0, -1, 1.5])
+def test_neural_parameter_forecast_model_rejects_invalid_component_counts(
+    n_components: object,
+) -> None:
+    hbv = _model()
+    with pytest.raises(ValueError, match="n_components must be a positive integer"):
+        NeuralParameterForecastModel(
+            hbv,
+            nn.Identity(),
+            dynamic_inputs=("precip", "pet", "temp"),
+            static_inputs=(),
+            physics_forcing={"precip": "precip", "pet": "pet", "temp": "temp"},
+            network_dynamic_inputs=("precip", "pet", "temp"),
+            network_static_inputs=(),
+            forcing_factory=HBVForcing,
+            output_specification=Point(),
+            n_components=cast(Any, n_components),
+        )
+
+
+def test_neural_parameter_forecast_model_requires_component_runner_only_for_multiple_components() -> None:
+    gr6j = GR6J(
+        x1=torch.tensor(350.0, dtype=torch.float64),
+        x2=torch.tensor(0.0, dtype=torch.float64),
+        x3=torch.tensor(90.0, dtype=torch.float64),
+        x4=torch.tensor(1.7, dtype=torch.float64),
+        x5=torch.tensor(0.0, dtype=torch.float64),
+        x6=torch.tensor(4.5, dtype=torch.float64),
+    )
+    with pytest.raises(TypeError, match="callable run_components"):
+        NeuralParameterForecastModel(
+            gr6j,
+            nn.Linear(2, 2 * len(gr6j.parameter_bounds), dtype=torch.float64),
+            dynamic_inputs=("precip", "pet"),
+            static_inputs=(),
+            physics_forcing={"precip": "precip", "pet": "pet"},
+            network_dynamic_inputs=("precip", "pet"),
+            network_static_inputs=(),
+            forcing_factory=dict,
+            output_specification=Point(),
+            n_components=2,
+        )

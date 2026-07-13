@@ -150,7 +150,7 @@ def bounded_parameters(
 
 
 class NeuralParameterForecastModel(nn.Module):
-    """Run one neural-parameterized state-space model as an hcx point forecast."""
+    """Run neural-parameterized state-space components as one hcx point forecast."""
 
     def __init__(
         self,
@@ -164,19 +164,25 @@ class NeuralParameterForecastModel(nn.Module):
         network_static_inputs: Sequence[str | int],
         forcing_factory: Callable[..., Any],
         output_specification: hcx.OutputSpecification[Any],
+        n_components: int = 1,
     ) -> None:
         super().__init__()
         if not physics_forcing:
             raise ValueError("at least one physics-forcing field is required")
         if output_specification.raw_head_width != 1:
             raise ValueError("the discharge adapter requires a point output specification of width 1")
+        if type(n_components) is not int or n_components <= 0:
+            raise ValueError("n_components must be a positive integer")
         parameter_bounds = getattr(wrapped_model, "parameter_bounds", None)
         if not isinstance(parameter_bounds, Mapping):
             raise TypeError("wrapped_model must expose parameter_bounds")
+        if n_components > 1 and not callable(getattr(wrapped_model, "run_components", None)):
+            raise TypeError("wrapped_model must provide a callable run_components for n_components > 1")
 
         self.wrapped_model = wrapped_model
         self.network = network
         self.parameter_bounds = cast(Mapping[str, tuple[float, float]], parameter_bounds)
+        self.n_components = n_components
         self.dynamic_inputs = tuple(dynamic_inputs)
         self.static_inputs = tuple(static_inputs)
         self.physics_forcing = tuple(physics_forcing.items())
@@ -222,9 +228,28 @@ class NeuralParameterForecastModel(nn.Module):
             raise TypeError("network must return a torch.Tensor")
 
         batch_size, input_length = scalar_dynamic.shape[:2]
-        if raw_parameters.ndim != 3 or raw_parameters.shape[:2] != (batch_size, input_length):
-            raise ValueError("network output must have shape [B, input_length, P] matching scalar_dynamic")
-        parameters = bounded_parameters(raw_parameters, self.parameter_bounds)
+        parameter_width = len(self.parameter_bounds)
+        expected_width = self.n_components * parameter_width
+        if raw_parameters.ndim != 3 or raw_parameters.shape != (batch_size, input_length, expected_width):
+            raise ValueError(
+                "network output must have shape "
+                f"[B, input_length, N * P] = {(batch_size, input_length, expected_width)}; "
+                f"got {tuple(raw_parameters.shape)}"
+            )
+        raw_parameter_sets = raw_parameters.reshape(
+            batch_size,
+            input_length,
+            self.n_components,
+            parameter_width,
+        )
+        bounded = bounded_parameters(
+            raw_parameter_sets.reshape(batch_size, input_length * self.n_components, parameter_width),
+            self.parameter_bounds,
+        )
+        parameters = {
+            name: value.reshape(batch_size, input_length, self.n_components).permute(0, 2, 1)
+            for name, value in bounded.items()
+        }
 
         output_length = batch.target.shape[-1]
         if output_length <= 0:
@@ -239,18 +264,44 @@ class NeuralParameterForecastModel(nn.Module):
             )
 
         main_forcing = make_forcing(warmup_length, input_length)
-        main_parameters = {name: value[:, warmup_length:input_length] for name, value in parameters.items()}
-        if warmup_length:
-            warmup_forcing = make_forcing(0, warmup_length)
-            warmup_parameters = {name: value[:, :warmup_length] for name, value in parameters.items()}
-            discharge = self.wrapped_model.run(
-                main_forcing,
-                parameters=main_parameters,
-                warmup=warmup_forcing,
-                warmup_parameters=warmup_parameters,
-            )
+        main_parameters = {name: value[:, :, warmup_length:input_length] for name, value in parameters.items()}
+        warmup_forcing = make_forcing(0, warmup_length) if warmup_length else None
+        warmup_parameters = (
+            {name: value[:, :, :warmup_length] for name, value in parameters.items()} if warmup_length else None
+        )
+
+        # Keep the ordinary run path explicit: N=1 must be bit-identical to
+        # the pre-component NeuralParameterForecastModel implementation.
+        if self.n_components == 1:
+            single_main = {name: value[:, 0, :] for name, value in main_parameters.items()}
+            if warmup_forcing is not None:
+                assert warmup_parameters is not None
+                single_warmup = {name: value[:, 0, :] for name, value in warmup_parameters.items()}
+                discharge = self.wrapped_model.run(
+                    main_forcing,
+                    parameters=single_main,
+                    warmup=warmup_forcing,
+                    warmup_parameters=single_warmup,
+                )
+            else:
+                discharge = self.wrapped_model.run(main_forcing, parameters=single_main)
         else:
-            discharge = self.wrapped_model.run(main_forcing, parameters=main_parameters)
+            run_components = cast(Callable[..., torch.Tensor], getattr(self.wrapped_model, "run_components", None))
+            if warmup_forcing is not None:
+                assert warmup_parameters is not None
+                discharge = run_components(
+                    main_forcing,
+                    parameters=main_parameters,
+                    n_components=self.n_components,
+                    warmup=warmup_forcing,
+                    warmup_parameters=warmup_parameters,
+                )
+            else:
+                discharge = run_components(
+                    main_forcing,
+                    parameters=main_parameters,
+                    n_components=self.n_components,
+                )
 
         discharge = discharge[:, -output_length:]
         expected_shape = (batch_size, output_length)
