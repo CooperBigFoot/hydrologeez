@@ -20,7 +20,6 @@ from hydrologeez.models.hbv import (
     RoutingProcess,
     SnowProcess,
     SoilProcess,
-    constants,
     processes,
 )
 from hydrologeez.models.hbv.state import HBVState
@@ -121,12 +120,16 @@ def test_process_slot_contracts() -> None:
     assert len({id(implementation.introduces) for implementation in physical}) == len(physical)
 
 
-def test_default_parameter_bounds_match_canonical_constants() -> None:
+def test_default_parameter_bounds_match_installed_slots() -> None:
     model = _slot_model()
-    expected = {name: constants.PARAM_BOUNDS[name] for name in constants.PARAM_NAMES}
+    expected = {
+        name: bounds
+        for slot in (model.snow, model.soil, model.response, model.routing)
+        for name, bounds in slot.introduces.items()
+    }
 
     assert model.parameter_bounds == expected
-    assert tuple(model.parameter_bounds) == constants.PARAM_NAMES == PARAM_NAMES
+    assert tuple(model.parameter_bounds) == PARAM_NAMES
     assert tuple(dict(model.named_parameters())) == tuple(model.parameter_bounds)
 
 

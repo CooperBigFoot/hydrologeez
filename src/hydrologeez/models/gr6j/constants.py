@@ -25,14 +25,3 @@ EXP_BRANCH_THRESHOLD: float = 7.0
 
 # Flat state layout: [S, R, Exp, uh1[20], uh2[40]]
 STATE_SIZE: int = 63
-
-# Parameter bounds (code bounds)
-PARAM_NAMES: tuple[str, ...] = ("x1", "x2", "x3", "x4", "x5", "x6")
-PARAM_BOUNDS: dict[str, tuple[float, float]] = {
-    "x1": (1.0, 2500.0),
-    "x2": (-5.0, 5.0),
-    "x3": (1.0, 1000.0),
-    "x4": (0.5, 10.0),
-    "x5": (-4.0, 4.0),
-    "x6": (1.0, 50.0),
-}

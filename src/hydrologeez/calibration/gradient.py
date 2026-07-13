@@ -8,7 +8,6 @@ import torch
 from torch import nn
 
 from hydrologeez.calibration.adapter import (
-    GR6J_SPEC,
     ParamSpec,
     array_to_model,
     array_to_parameters,
@@ -78,7 +77,7 @@ def calibrate_gradient(
     if not math.isfinite(learning_rate) or learning_rate <= 0:
         raise ValueError("learning_rate must be positive and finite")
 
-    spec = param_spec if param_spec is not None else GR6J_SPEC
+    spec = param_spec if param_spec is not None else ParamSpec.from_model(template)
     x0 = params_to_array(template, spec)
     if x0.ndim != 1:
         raise ValueError("selected starting parameters must be one-dimensional")

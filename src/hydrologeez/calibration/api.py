@@ -91,7 +91,7 @@ def calibrate_evolutionary(
     observed: torch.Tensor,
     *,
     objective_term: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
-    param_spec: ParamSpec,
+    param_spec: ParamSpec | None = None,
     simulate: Callable[[nn.Module, Any, dict[str, torch.Tensor]], torch.Tensor] = lambda m, f, p: m.run(f, p),
     pop_size: int = 16,
     n_generations: int = 20,
@@ -105,13 +105,14 @@ def calibrate_evolutionary(
 ) -> tuple[nn.Module, GAResult]:
     """Calibrate one model with GA; custom ``simulate`` must accept explicit parameters."""
     _validate_pop_size(pop_size)
+    spec = param_spec if param_spec is not None else ParamSpec.from_model(template)
     evaluate_batch, init, crossover, mutate, dtype, device = _assemble(
         template,
         forcing,
         observed,
         objective_term=objective_term,
         objective_kind="ga",
-        param_spec=param_spec,
+        param_spec=spec,
         simulate=simulate,
         warmup=warmup,
         eta_crossover=eta_crossover,
@@ -132,7 +133,7 @@ def calibrate_evolutionary(
     )
     best_x, _ = result.best
     best = torch.as_tensor(best_x, dtype=dtype, device=device)
-    return array_to_model(template, best, param_spec), result
+    return array_to_model(template, best, spec), result
 
 
 def calibrate_nsga2(
@@ -141,7 +142,7 @@ def calibrate_nsga2(
     observed: torch.Tensor,
     *,
     objective_term: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
-    param_spec: ParamSpec,
+    param_spec: ParamSpec | None = None,
     simulate: Callable[[nn.Module, Any, dict[str, torch.Tensor]], torch.Tensor] = lambda m, f, p: m.run(f, p),
     pop_size: int = 16,
     n_generations: int = 20,
@@ -155,13 +156,14 @@ def calibrate_nsga2(
 ) -> tuple[list[nn.Module], NSGA2Result]:
     """Calibrate a Pareto front; custom ``simulate`` must accept explicit parameters."""
     _validate_pop_size(pop_size)
+    spec = param_spec if param_spec is not None else ParamSpec.from_model(template)
     evaluate_batch, init, crossover, mutate, dtype, device = _assemble(
         template,
         forcing,
         observed,
         objective_term=objective_term,
         objective_kind="nsga2",
-        param_spec=param_spec,
+        param_spec=spec,
         simulate=simulate,
         warmup=warmup,
         eta_crossover=eta_crossover,
@@ -181,7 +183,6 @@ def calibrate_nsga2(
         evaluate_batch=evaluate_batch,
     )
     models = [
-        array_to_model(template, torch.as_tensor(x, dtype=dtype, device=device), param_spec)
-        for x in result.pareto_front.x
+        array_to_model(template, torch.as_tensor(x, dtype=dtype, device=device), spec) for x in result.pareto_front.x
     ]
     return models, result

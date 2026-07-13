@@ -190,7 +190,7 @@ def test_registered_parameters_receive_gradients() -> None:
     loss.backward()
 
     named_parameters = dict(model.named_parameters())
-    assert tuple(named_parameters) == PARAMETER_NAMES
+    assert tuple(named_parameters) == tuple(model.parameter_bounds) == ("x1", "x4", "x2", "x3", "x5", "x6")
     assert all(isinstance(getattr(model, name), nn.Parameter) for name in PARAMETER_NAMES)
     gradients = [parameter.grad for parameter in named_parameters.values()]
     assert all(gradient is not None for gradient in gradients)

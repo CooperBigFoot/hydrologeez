@@ -32,6 +32,10 @@ GOLDEN = Path(__file__).parent / "golden" / "gr6j.npz"
 
 
 class _ZeroProduction(ProductionProcess):
+    introduces: ClassVar[dict[str, ParameterBounds]] = {
+        "x1": (1.0, 2500.0),
+    }
+
     def forward(
         self,
         precip: torch.Tensor,
@@ -123,8 +127,30 @@ def test_routing_slot_swap_changes_parameter_names_and_bounds() -> None:
     }
     assert set(swapped.parameter_bounds) != set(default.parameter_bounds)
     assert swapped.parameter_bounds["lag"] != default.parameter_bounds["x4"]
-    assert tuple(dict(default.named_parameters())) == ("x1", "x2", "x3", "x4", "x5", "x6")
-    assert tuple(dict(swapped.named_parameters())) == ("x1", "x2", "x3", "x4", "x5", "x6")
+    assert (
+        tuple(dict(default.named_parameters()))
+        == tuple(default.parameter_bounds)
+        == (
+            "x1",
+            "x4",
+            "x2",
+            "x3",
+            "x5",
+            "x6",
+        )
+    )
+    assert (
+        tuple(dict(swapped.named_parameters()))
+        == tuple(swapped.parameter_bounds)
+        == (
+            "x1",
+            "lag",
+            "x2",
+            "x3",
+            "x5",
+            "x6",
+        )
+    )
 
 
 @pytest.fixture(scope="module")

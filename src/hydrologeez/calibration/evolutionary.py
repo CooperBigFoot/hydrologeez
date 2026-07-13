@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from hydrologeez.calibration.adapter import GR6J_SPEC, ParamSpec, array_to_parameters
+from hydrologeez.calibration.adapter import ParamSpec, array_to_parameters
 
 ObjectiveKind = Literal["ga", "nsga2"]
 
@@ -87,7 +87,7 @@ def make_objective(
     ``objective_term`` receives observed and simulated tensors shaped ``[B,T_eval]``
     and returns ``[B]`` for GA or ``[B,n_obj]`` for NSGA-II. Lower is better.
     """
-    spec = param_spec if param_spec is not None else GR6J_SPEC
+    spec = param_spec if param_spec is not None else ParamSpec.from_model(template)
     dtype, device = _template_dtype_device(template)
     if not isinstance(observed, torch.Tensor):
         raise TypeError("observed must be a torch.Tensor")
