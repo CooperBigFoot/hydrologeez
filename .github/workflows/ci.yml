@@ -42,7 +42,7 @@ jobs:
         run: uv run ruff check
 
       - name: Type check (ty)
-        run: uv run ty check
+        run: uv run --extra hcx ty check
 
       - name: Pytest
-        run: uv run pytest
+        run: uv run --extra hcx pytest
