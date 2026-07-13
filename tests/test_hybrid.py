@@ -1,4 +1,6 @@
+import copy
 from dataclasses import fields, replace
+from typing import Any, cast
 
 import pytest
 import torch
@@ -11,6 +13,7 @@ from hydrologeez.hybrid import (
     select_features,
     select_network_inputs,
 )
+from hydrologeez.models.gr6j import GR6J
 from hydrologeez.models.hbv import HBVFluxes, HBVForcing, HBVModel, HBVState
 
 
@@ -698,3 +701,235 @@ def test_neural_parameter_forecast_model_trains_on_synthetic_batch() -> None:
     early_loss = sum(losses[:5]) / 5
     late_loss = sum(losses[-5:]) / 5
     assert late_loss < early_loss
+
+
+class _FixedComponentParameterNetwork(nn.Module):
+    def __init__(self, raw_components: torch.Tensor) -> None:
+        super().__init__()
+        self.raw_components = nn.Parameter(raw_components)
+        self.calls = 0
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        self.calls += 1
+        return self.raw_components.reshape(1, 1, -1).expand(inputs.shape[0], inputs.shape[1], -1)
+
+
+def test_neural_parameter_forecast_model_n1_is_exact_default_identity_with_warmup() -> None:
+    torch.manual_seed(1729)
+    batch = make_synthetic_batch(
+        batch_size=2,
+        input_length=7,
+        output_length=3,
+        scalar_dynamic_features=3,
+        scalar_static_features=1,
+        include_gridded_dynamic=False,
+        include_gridded_static=False,
+        dtype=torch.float64,
+        seed=1729,
+    )
+    hbv_default = _model()
+    hbv_explicit = _model()
+    network_default = _TimeVaryingParameterNetwork(4, len(hbv_default.parameter_bounds)).to(dtype=torch.float64)
+    network_explicit = copy.deepcopy(network_default)
+    default_model = NeuralParameterForecastModel(
+        hbv_default,
+        network_default,
+        dynamic_inputs=("precip", "pet", "temp"),
+        static_inputs=("area",),
+        physics_forcing={"precip": "precip", "pet": "pet", "temp": "temp"},
+        network_dynamic_inputs=("precip", "pet", "temp"),
+        network_static_inputs=("area",),
+        forcing_factory=HBVForcing,
+        output_specification=Point(),
+    )
+    explicit_model = NeuralParameterForecastModel(
+        hbv_explicit,
+        network_explicit,
+        dynamic_inputs=("precip", "pet", "temp"),
+        static_inputs=("area",),
+        physics_forcing={"precip": "precip", "pet": "pet", "temp": "temp"},
+        network_dynamic_inputs=("precip", "pet", "temp"),
+        network_static_inputs=("area",),
+        forcing_factory=HBVForcing,
+        output_specification=Point(),
+        n_components=1,
+    )
+
+    default_forecast = default_model(batch)
+    explicit_forecast = explicit_model(batch)
+
+    assert torch.equal(explicit_forecast.prediction, default_forecast.prediction)
+    torch.testing.assert_close(
+        explicit_forecast.prediction,
+        default_forecast.prediction,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    assert explicit_forecast.sample_ids is batch.metadata.sample_ids
+    assert explicit_forecast.input_end_indices is batch.metadata.input_end_indices
+    assert explicit_forecast.target_fill_mask is batch.metadata.target_fill_mask
+
+
+def test_neural_parameter_forecast_model_runs_distinct_components_average_before_routing() -> None:
+    batch = make_synthetic_batch(
+        batch_size=2,
+        input_length=8,
+        output_length=4,
+        scalar_dynamic_features=3,
+        scalar_static_features=1,
+        include_gridded_dynamic=False,
+        include_gridded_static=False,
+        dtype=torch.float64,
+        seed=1729,
+    )
+    scalar_dynamic = torch.tensor(
+        [
+            [
+                [8.0, 0.4, -1.0],
+                [2.0, 0.5, 2.0],
+                [0.0, 0.6, 4.0],
+                [6.0, 0.3, 1.0],
+                [3.0, 0.7, 3.0],
+                [9.0, 0.5, 5.0],
+                [1.0, 0.4, 2.0],
+                [5.0, 0.6, 4.0],
+            ],
+            [
+                [3.0, 0.3, 1.0],
+                [7.0, 0.6, -2.0],
+                [4.0, 0.5, 3.0],
+                [0.0, 0.8, 5.0],
+                [8.0, 0.4, 2.0],
+                [2.0, 0.7, 4.0],
+                [6.0, 0.5, 1.0],
+                [1.0, 0.3, 3.0],
+            ],
+        ],
+        dtype=torch.float64,
+    )
+    batch = replace(batch, scalar_dynamic=scalar_dynamic)
+    hbv = _model()
+    n_components = 2
+    parameter_width = len(hbv.parameter_bounds)
+    raw_components = torch.stack(
+        (
+            torch.full((parameter_width,), -1.5, dtype=torch.float64),
+            torch.full((parameter_width,), 1.5, dtype=torch.float64),
+        )
+    )
+    network = _FixedComponentParameterNetwork(raw_components)
+    model = NeuralParameterForecastModel(
+        hbv,
+        network,
+        dynamic_inputs=("precip", "pet", "temp"),
+        static_inputs=("area",),
+        physics_forcing={"precip": "precip", "pet": "pet", "temp": "temp"},
+        network_dynamic_inputs=("precip", "pet", "temp"),
+        network_static_inputs=("area",),
+        forcing_factory=HBVForcing,
+        output_specification=Point(),
+        n_components=n_components,
+    )
+
+    forecast = model(batch)
+
+    assert network.calls == 1
+    bounded = bounded_parameters(network.raw_components.detach(), hbv.parameter_bounds)
+    full_parameters = {
+        name: value[None, :, None].expand(batch.target.shape[0], n_components, scalar_dynamic.shape[1])
+        for name, value in bounded.items()
+    }
+    assert all(not torch.equal(value[:, 0, :], value[:, 1, :]) for value in full_parameters.values())
+    forcing = HBVForcing(
+        precip=scalar_dynamic[..., 0],
+        pet=scalar_dynamic[..., 1],
+        temp=scalar_dynamic[..., 2],
+    )
+    warmup_length = scalar_dynamic.shape[1] - batch.target.shape[1]
+    expected = hbv.run_components(
+        HBVForcing(
+            precip=forcing.precip[:, warmup_length:],
+            pet=forcing.pet[:, warmup_length:],
+            temp=forcing.temp[:, warmup_length:],
+        ),
+        {name: value[:, :, warmup_length:] for name, value in full_parameters.items()},
+        n_components=n_components,
+        warmup=HBVForcing(
+            precip=forcing.precip[:, :warmup_length],
+            pet=forcing.pet[:, :warmup_length],
+            temp=forcing.temp[:, :warmup_length],
+        ),
+        warmup_parameters={name: value[:, :, :warmup_length] for name, value in full_parameters.items()},
+    )
+    torch.testing.assert_close(forecast.prediction, expected, rtol=1e-12, atol=1e-12)
+    assert forecast.prediction.shape == batch.target.shape
+    assert forecast.sample_ids is batch.metadata.sample_ids
+    assert forecast.input_end_indices is batch.metadata.input_end_indices
+    assert forecast.target_fill_mask is batch.metadata.target_fill_mask
+
+    singleton_network = _FixedComponentParameterNetwork(raw_components[:1].clone())
+    singleton_model = NeuralParameterForecastModel(
+        _model(),
+        singleton_network,
+        dynamic_inputs=("precip", "pet", "temp"),
+        static_inputs=("area",),
+        physics_forcing={"precip": "precip", "pet": "pet", "temp": "temp"},
+        network_dynamic_inputs=("precip", "pet", "temp"),
+        network_static_inputs=("area",),
+        forcing_factory=HBVForcing,
+        output_specification=Point(),
+        n_components=1,
+    )
+    singleton = singleton_model(batch)
+    assert not torch.allclose(forecast.prediction, singleton.prediction, rtol=1e-12, atol=1e-12)
+
+    forecast.prediction.sum().backward()
+    gradient = network.raw_components.grad
+    assert gradient is not None
+    assert torch.isfinite(gradient).all()
+    assert torch.count_nonzero(gradient[0]) > 0
+    assert torch.count_nonzero(gradient[1]) > 0
+
+
+@pytest.mark.parametrize("n_components", [True, 0, -1, 1.5])
+def test_neural_parameter_forecast_model_rejects_invalid_component_counts(
+    n_components: object,
+) -> None:
+    hbv = _model()
+    with pytest.raises(ValueError, match="n_components must be a positive integer"):
+        NeuralParameterForecastModel(
+            hbv,
+            nn.Identity(),
+            dynamic_inputs=("precip", "pet", "temp"),
+            static_inputs=(),
+            physics_forcing={"precip": "precip", "pet": "pet", "temp": "temp"},
+            network_dynamic_inputs=("precip", "pet", "temp"),
+            network_static_inputs=(),
+            forcing_factory=HBVForcing,
+            output_specification=Point(),
+            n_components=cast(Any, n_components),
+        )
+
+
+def test_neural_parameter_forecast_model_requires_component_runner_only_for_multiple_components() -> None:
+    gr6j = GR6J(
+        x1=torch.tensor(350.0, dtype=torch.float64),
+        x2=torch.tensor(0.0, dtype=torch.float64),
+        x3=torch.tensor(90.0, dtype=torch.float64),
+        x4=torch.tensor(1.7, dtype=torch.float64),
+        x5=torch.tensor(0.0, dtype=torch.float64),
+        x6=torch.tensor(4.5, dtype=torch.float64),
+    )
+    with pytest.raises(TypeError, match="callable run_components"):
+        NeuralParameterForecastModel(
+            gr6j,
+            nn.Linear(2, 2 * len(gr6j.parameter_bounds), dtype=torch.float64),
+            dynamic_inputs=("precip", "pet"),
+            static_inputs=(),
+            physics_forcing={"precip": "precip", "pet": "pet"},
+            network_dynamic_inputs=("precip", "pet"),
+            network_static_inputs=(),
+            forcing_factory=dict,
+            output_specification=Point(),
+            n_components=2,
+        )
