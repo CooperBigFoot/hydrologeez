@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from abc import abstractmethod
+
 import torch
-from torch import nn
 
 from hydrologeez.convolution import convolve_delay_line
+from hydrologeez.processes import Process
 
 from .constants import EXP_BRANCH_THRESHOLD, MAX_EXP_ARG, MAX_TANH_ARG, NH, PERC_CONSTANT, B, C, D
 
@@ -124,7 +126,65 @@ def convolve_uh(
     return convolve_delay_line(states, ordinates, input_value)
 
 
-class PhysicalProduction(nn.Module):
+class ProductionProcess(Process):
+    @abstractmethod
+    def forward(
+        self,
+        precip: torch.Tensor,
+        pet: torch.Tensor,
+        production_store: torch.Tensor,
+        x1: torch.Tensor,
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        raise NotImplementedError
+
+
+class RoutingProcess(Process):
+    @abstractmethod
+    def forward(
+        self,
+        uh1_state: torch.Tensor,
+        uh2_state: torch.Tensor,
+        total_effective_rainfall: torch.Tensor,
+        x4: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        raise NotImplementedError
+
+
+class ResponseProcess(Process):
+    @abstractmethod
+    def forward(
+        self,
+        routing_store: torch.Tensor,
+        exponential_store: torch.Tensor,
+        q9: torch.Tensor,
+        q1: torch.Tensor,
+        x2: torch.Tensor,
+        x3: torch.Tensor,
+        x5: torch.Tensor,
+        x6: torch.Tensor,
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        raise NotImplementedError
+
+
+class PhysicalProduction(ProductionProcess):
     """Physical GR6J production and percolation processes."""
 
     def forward(
@@ -158,7 +218,7 @@ class PhysicalProduction(nn.Module):
         )
 
 
-class PhysicalRouting(nn.Module):
+class PhysicalRouting(RoutingProcess):
     """Physical GR6J unit-hydrograph routing processes."""
 
     def forward(
@@ -174,7 +234,7 @@ class PhysicalRouting(nn.Module):
         return q9, q1, uh1, uh2
 
 
-class PhysicalResponse(nn.Module):
+class PhysicalResponse(ResponseProcess):
     """Physical GR6J routing, exponential, and direct response processes."""
 
     def forward(
