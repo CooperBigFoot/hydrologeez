@@ -8,7 +8,7 @@ import pytest
 import torch
 from ctrl_freak.results import GAResult, NSGA2Result
 
-from hydrologeez.calibration.adapter import GR6J_SPEC, params_to_array
+from hydrologeez.calibration.adapter import ParamSpec, params_to_array
 from hydrologeez.calibration.api import calibrate_evolutionary, calibrate_nsga2
 from hydrologeez.calibration.evolutionary import make_batch_evaluator, make_objective
 from hydrologeez.models.gr6j.model import GR6J, GR6JForcing
@@ -53,9 +53,10 @@ def _losses(model: GR6J, forcing: GR6JForcing, observed: torch.Tensor) -> torch.
 
 
 def _assert_bounds(model: torch.nn.Module) -> None:
-    theta = params_to_array(model, GR6J_SPEC)
-    lower = torch.tensor(GR6J_SPEC.lower, dtype=DTYPE)
-    upper = torch.tensor(GR6J_SPEC.upper, dtype=DTYPE)
+    spec = ParamSpec.from_model(model)
+    theta = params_to_array(model, spec)
+    lower = torch.tensor(spec.lower, dtype=DTYPE)
+    upper = torch.tensor(spec.upper, dtype=DTYPE)
     assert bool(torch.all((theta >= lower) & (theta <= upper)))
 
 
@@ -78,7 +79,6 @@ def test_ga_real_batched_path_improves(problem: tuple[GR6JForcing, torch.Tensor,
         forcing,
         observed,
         objective_term=_mse,
-        param_spec=GR6J_SPEC,
         simulate=simulate,
         pop_size=POP_SIZE,
         n_generations=GENERATIONS,
@@ -112,7 +112,6 @@ def test_nsga2_real_batched_path_dominates_template(problem: tuple[GR6JForcing, 
         forcing,
         observed,
         objective_term=_vector_loss,
-        param_spec=GR6J_SPEC,
         simulate=simulate,
         pop_size=POP_SIZE,
         n_generations=GENERATIONS,
@@ -138,6 +137,7 @@ def test_nsga2_real_batched_path_dominates_template(problem: tuple[GR6JForcing, 
 
 def test_numpy_boundary_shapes_and_template_immutability(problem: tuple[GR6JForcing, torch.Tensor, GR6J]) -> None:
     forcing, observed, template = problem
+    spec = ParamSpec.from_model(template)
     before = copy.deepcopy(template.state_dict())
     calls = 0
 
@@ -147,7 +147,7 @@ def test_numpy_boundary_shapes_and_template_immutability(problem: tuple[GR6JForc
         assert not torch.is_grad_enabled()
         return model.run(population_forcing, parameters)
 
-    candidates = np.array([GR6J_SPEC.lower, GR6J_SPEC.upper, (450, 1.2, 120, 2.2, -0.5, 6)], dtype=float)
+    candidates = np.array([spec.lower, spec.upper, (450, 2.2, 1.2, 120, -0.5, 6)], dtype=float)
     scalar = make_objective(template, forcing, observed, simulate=simulate, objective_term=_mse, warmup=WARMUP)
     scalar_batch = make_batch_evaluator(scalar, dtype=DTYPE, device=torch.device("cpu"), objective_kind="ga")
     output = scalar_batch(candidates)
@@ -176,7 +176,7 @@ def test_invalid_inputs_and_objective_shapes(problem: tuple[GR6JForcing, torch.T
     evaluate = make_objective(template, forcing, observed, simulate=simulate, objective_term=_mse, warmup=0)
     with pytest.raises(ValueError, match="theta must have shape"):
         evaluate(torch.zeros((3, 5), dtype=DTYPE))
-    candidates = np.tile(np.array((450.0, 1.2, 120.0, 2.2, -0.5, 6.0)), (3, 1))
+    candidates = np.tile(np.array((450.0, 2.2, 1.2, 120.0, -0.5, 6.0)), (3, 1))
     ga_bad = make_objective(
         template,
         forcing,

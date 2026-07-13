@@ -1,7 +1,7 @@
 """Bridge hydrological parameter specifications to PyTorch modules and tensors.
 
-Two views are provided. ``params_to_array`` and ``array_to_parameters`` use a
-canonical ``ParamSpec`` order; the latter is the differentiable functional view.
+Two views are provided. ``params_to_array`` and ``array_to_parameters`` use an
+ordered model-derived ``ParamSpec``; the latter is the differentiable functional view.
 ``array_to_model`` is instead an independent module-reconstruction view.
 ``model_to_flat`` and ``flat_to_model`` generically flatten and reconstruct all
 registered parameters in registration order.
@@ -11,13 +11,12 @@ from __future__ import annotations
 
 import copy
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 import torch
 from torch import nn
-
-from hydrologeez.models.hbv import constants as hbv_constants
 
 
 @dataclass(frozen=True)
@@ -32,31 +31,24 @@ class ParamSpec:
     lower: tuple[float, ...]
     upper: tuple[float, ...]
 
-
-# --- GR6J (default spec; values unchanged from the original module) ----------
-# Canonical parameter order = the column order of the ctrl-freak population matrix.
-PARAM_NAMES: tuple[str, ...] = ("x1", "x2", "x3", "x4", "x5", "x6")
-
-# Code bounds; x6 uses [1, 50].
-LOWER_BOUNDS: tuple[float, ...] = (1.0, -5.0, 1.0, 0.5, -4.0, 1.0)
-UPPER_BOUNDS: tuple[float, ...] = (2500.0, 5.0, 1000.0, 10.0, 4.0, 50.0)
-
-GR6J_SPEC: ParamSpec = ParamSpec(names=PARAM_NAMES, lower=LOWER_BOUNDS, upper=UPPER_BOUNDS)
-
-
-# --- HBV-Light single-zone (14 params, canonical order tt..maxbas) -----------
-# Names + bounds are the single source of truth in models/hbv/constants.py.
-# Only ``maxbas`` is hard-validated; the other 13 bounds are advisory (calibration only).
-def _hbv_bounds() -> tuple[tuple[str, ...], tuple[float, ...], tuple[float, ...]]:
-    names = tuple(str(n) for n in hbv_constants.PARAM_NAMES)
-    pb = hbv_constants.PARAM_BOUNDS
-    lower = tuple(float(pb[n][0]) for n in names)
-    upper = tuple(float(pb[n][1]) for n in names)
-    return names, lower, upper
-
-
-_HBV_NAMES, _HBV_LOWER, _HBV_UPPER = _hbv_bounds()
-HBV_SPEC: ParamSpec = ParamSpec(names=_HBV_NAMES, lower=_HBV_LOWER, upper=_HBV_UPPER)
+    @classmethod
+    def from_model(cls, model: Any) -> ParamSpec:
+        """Build a validated specification from a module's ordered parameter bounds."""
+        module = _require_module(model, "model")
+        parameter_bounds = getattr(module, "parameter_bounds", None)
+        if not isinstance(parameter_bounds, Mapping):
+            raise TypeError("model.parameter_bounds must be a mapping")
+        names = tuple(parameter_bounds)
+        if not all(isinstance(name, str) for name in names):
+            raise TypeError("model.parameter_bounds keys must be strings")
+        bounds = tuple(parameter_bounds.values())
+        spec = cls(
+            names=names,
+            lower=tuple(float(bound[0]) for bound in bounds),
+            upper=tuple(float(bound[1]) for bound in bounds),
+        )
+        _validate_spec(spec)
+        return spec
 
 
 @dataclass(frozen=True)
@@ -114,27 +106,28 @@ def _install_parameter(module: nn.Module, name: str, parameter: nn.Parameter) ->
 
 
 def bounds_array(
-    spec: ParamSpec = GR6J_SPEC,
+    spec: ParamSpec,
     *,
     dtype: torch.dtype = torch.float64,
     device: torch.device | str | None = None,
 ) -> Any:
-    """Return fresh lower and upper tensors in canonical order."""
+    """Return fresh lower and upper tensors in specification order."""
     _validate_spec(spec)
     return torch.tensor(spec.lower, dtype=dtype, device=device), torch.tensor(spec.upper, dtype=dtype, device=device)
 
 
-def params_to_array(model: Any, spec: ParamSpec = GR6J_SPEC) -> Any:
-    """Stack exact top-level registered parameters in canonical order."""
-    _validate_spec(spec)
+def params_to_array(model: Any, spec: ParamSpec | None = None) -> Any:
+    """Stack exact top-level registered parameters in specification order."""
     module = _require_module(model, "model")
-    if any("." in name for name in spec.names):
+    resolved_spec = ParamSpec.from_model(module) if spec is None else spec
+    _validate_spec(resolved_spec)
+    if any("." in name for name in resolved_spec.names):
         raise ValueError("params_to_array only accepts top-level parameter names")
     registered = dict(module.named_parameters())
-    missing = [name for name in spec.names if name not in registered]
+    missing = [name for name in resolved_spec.names if name not in registered]
     if missing:
         raise ValueError(f"missing registered parameters: {', '.join(missing)}")
-    parameters: list[torch.Tensor] = [registered[name] for name in spec.names]
+    parameters: list[torch.Tensor] = [registered[name] for name in resolved_spec.names]
     first = parameters[0]
     if any(parameter.shape != first.shape for parameter in parameters[1:]):
         raise ValueError("selected parameters must have identical shapes")
@@ -147,25 +140,26 @@ def params_to_array(model: Any, spec: ParamSpec = GR6J_SPEC) -> Any:
 
 def array_to_parameters(
     theta: torch.Tensor,
-    spec: ParamSpec = GR6J_SPEC,
+    spec: ParamSpec,
 ) -> dict[str, torch.Tensor]:
     """Return differentiable named tensor views of the final parameter axis."""
     _validate_theta(theta, spec)
     return {name: theta[..., index] for index, name in enumerate(spec.names)}
 
 
-def array_to_model(template: Any, theta: Any, spec: ParamSpec = GR6J_SPEC) -> Any:
-    """Reconstruct a module with independent registered canonical parameters."""
-    _validate_theta(theta, spec)
+def array_to_model(template: Any, theta: Any, spec: ParamSpec | None = None) -> Any:
+    """Reconstruct a module with independent registered parameters."""
     module = _require_module(template, "template")
-    if any("." in name for name in spec.names):
+    resolved_spec = ParamSpec.from_model(module) if spec is None else spec
+    _validate_theta(theta, resolved_spec)
+    if any("." in name for name in resolved_spec.names):
         raise ValueError("array_to_model only accepts top-level parameter names")
     registered = dict(module.named_parameters())
-    missing = [name for name in spec.names if name not in registered]
+    missing = [name for name in resolved_spec.names if name not in registered]
     if missing:
         raise ValueError(f"missing registered parameters: {', '.join(missing)}")
     rebuilt = copy.deepcopy(module)
-    for index, name in enumerate(spec.names):
+    for index, name in enumerate(resolved_spec.names):
         replacement = nn.Parameter(theta[..., index].detach().clone(), requires_grad=registered[name].requires_grad)
         setattr(rebuilt, name, replacement)
     return rebuilt

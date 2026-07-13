@@ -1,13 +1,14 @@
 """Golden trajectory tests for the Torch GR6J process boundary."""
 
+import inspect
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 import pytest
 import torch
-from torch import nn
 
-from hydrologeez.models.gr6j import GR6J, GR6JForcing
+from hydrologeez.models.gr6j import GR6J, GR6JForcing, ProductionProcess, ResponseProcess, RoutingProcess
 from hydrologeez.models.gr6j.constants import B, C, D
 from hydrologeez.models.gr6j.processes import (
     PhysicalProduction,
@@ -25,11 +26,16 @@ from hydrologeez.models.gr6j.processes import (
     routing_store_update,
 )
 from hydrologeez.models.gr6j.state import State
+from hydrologeez.processes import ParameterBounds, Process
 
 GOLDEN = Path(__file__).parent / "golden" / "gr6j.npz"
 
 
-class _ZeroProduction(nn.Module):
+class _ZeroProduction(ProductionProcess):
+    introduces: ClassVar[dict[str, ParameterBounds]] = {
+        "x1": (1.0, 2500.0),
+    }
+
     def forward(
         self,
         precip: torch.Tensor,
@@ -47,6 +53,104 @@ class _ZeroProduction(nn.Module):
         del pet, x1
         zero = torch.zeros_like(precip)
         return production_store, zero, zero, zero, zero, zero
+
+
+def test_process_slot_contracts() -> None:
+    contracts = (ProductionProcess, RoutingProcess, ResponseProcess)
+    physical = (PhysicalProduction, PhysicalRouting, PhysicalResponse)
+    expected = (
+        {"x1": (1.0, 2500.0)},
+        {"x4": (0.5, 10.0)},
+        {
+            "x2": (-5.0, 5.0),
+            "x3": (1.0, 1000.0),
+            "x5": (-4.0, 4.0),
+            "x6": (1.0, 50.0),
+        },
+    )
+
+    for contract, implementation, introduces in zip(contracts, physical, expected, strict=True):
+        assert inspect.isabstract(contract)
+        assert issubclass(contract, Process)
+        assert implementation.__bases__ == (contract,)
+        assert implementation.introduces == introduces
+        assert implementation.introduces is not contract.introduces
+
+
+class _AlternateRouting(RoutingProcess):
+    introduces: ClassVar[dict[str, ParameterBounds]] = {
+        "lag": (0.75, 9.0),
+    }
+
+    def forward(
+        self,
+        uh1_state: torch.Tensor,
+        uh2_state: torch.Tensor,
+        total_effective_rainfall: torch.Tensor,
+        x4: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        return PhysicalRouting()(uh1_state, uh2_state, total_effective_rainfall, x4)
+
+
+def test_routing_slot_swap_changes_parameter_names_and_bounds() -> None:
+    def model(routing: RoutingProcess | None = None) -> GR6J:
+        return GR6J(
+            torch.tensor(350.0, dtype=torch.float64),
+            torch.tensor(-1.2, dtype=torch.float64),
+            torch.tensor(90.0, dtype=torch.float64),
+            torch.tensor(2.4, dtype=torch.float64),
+            torch.tensor(0.15, dtype=torch.float64),
+            torch.tensor(12.0, dtype=torch.float64),
+            routing=routing,
+        )
+
+    default = model()
+    swapped = model(_AlternateRouting())
+
+    assert tuple(default.parameter_bounds) == ("x1", "x4", "x2", "x3", "x5", "x6")
+    assert default.parameter_bounds == {
+        "x1": (1.0, 2500.0),
+        "x4": (0.5, 10.0),
+        "x2": (-5.0, 5.0),
+        "x3": (1.0, 1000.0),
+        "x5": (-4.0, 4.0),
+        "x6": (1.0, 50.0),
+    }
+    assert tuple(swapped.parameter_bounds) == ("x1", "lag", "x2", "x3", "x5", "x6")
+    assert swapped.parameter_bounds == {
+        "x1": (1.0, 2500.0),
+        "lag": (0.75, 9.0),
+        "x2": (-5.0, 5.0),
+        "x3": (1.0, 1000.0),
+        "x5": (-4.0, 4.0),
+        "x6": (1.0, 50.0),
+    }
+    assert set(swapped.parameter_bounds) != set(default.parameter_bounds)
+    assert swapped.parameter_bounds["lag"] != default.parameter_bounds["x4"]
+    assert (
+        tuple(dict(default.named_parameters()))
+        == tuple(default.parameter_bounds)
+        == (
+            "x1",
+            "x4",
+            "x2",
+            "x3",
+            "x5",
+            "x6",
+        )
+    )
+    assert (
+        tuple(dict(swapped.named_parameters()))
+        == tuple(swapped.parameter_bounds)
+        == (
+            "x1",
+            "lag",
+            "x2",
+            "x3",
+            "x5",
+            "x6",
+        )
+    )
 
 
 @pytest.fixture(scope="module")
