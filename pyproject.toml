@@ -52,6 +52,9 @@ hcx = [
     "hcx>=0.1.0",
 ]
 
+[project.entry-points."hcx.models"]
+dpl_hbv = "hydrologeez.hcx:create_model"
+
 [build-system]
 requires = ["uv_build>=0.9.13,<0.10.0"]
 build-backend = "uv_build"
