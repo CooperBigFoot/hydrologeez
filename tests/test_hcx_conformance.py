@@ -1,10 +1,11 @@
 import subprocess
 import sys
+from importlib import metadata
 from typing import cast
 
 import pytest
 import torch
-from hcx import ModelFactory, OutputSpecification, Point, assert_conforms, make_synthetic_batch
+from hcx import MODEL_ENTRY_POINT_GROUP, ModelFactory, OutputSpecification, Point, assert_conforms, make_synthetic_batch
 from torch import nn
 
 from hydrologeez.hcx import GR6JForecastModel, HBVForecastModel, create_model
@@ -125,6 +126,44 @@ def test_neural_parameter_hbv_hcx_conformance() -> None:
 def test_plain_hydrologeez_import_does_not_import_hcx() -> None:
     code = "import sys; import hydrologeez; assert 'hcx' not in sys.modules"
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_installed_dpl_hbv_entry_point_loads_and_conforms() -> None:
+    torch.manual_seed(1729)
+    dynamic_inputs = ["precip", "pet", "temp"]
+    static_inputs = ["area"]
+    batch = make_synthetic_batch(
+        input_length=8,
+        output_length=3,
+        scalar_dynamic_features=len(dynamic_inputs),
+        scalar_static_features=len(static_inputs),
+        include_gridded_dynamic=False,
+        include_gridded_static=False,
+        seed=1729,
+    )
+    entries = [
+        entry
+        for entry in metadata.distribution("hydrologeez").entry_points
+        if entry.group == MODEL_ENTRY_POINT_GROUP and entry.name == "dpl_hbv"
+    ]
+
+    assert len(entries) == 1
+    factory = cast(ModelFactory, entries[0].load())
+    assert factory is create_model
+
+    model = factory(
+        {"hidden_size": 8, "n_components": 1},
+        dynamic_inputs=dynamic_inputs,
+        static_inputs=static_inputs,
+        input_size=len(dynamic_inputs),
+        static_size=len(static_inputs),
+        output_size=1,
+        output_specification=cast(OutputSpecification[object], Point()),
+    )
+
+    assert isinstance(model, NeuralParameterForecastModel)
+    forecast = assert_conforms(model, batch)
+    assert forecast.prediction.shape == (batch.target.shape[0], batch.target.shape[-1])
 
 
 @pytest.mark.parametrize("n_components", [1, 3])
