@@ -12,9 +12,6 @@ from hydrologeez.models.gr6j import constants, processes
 from hydrologeez.models.gr6j.state import State
 from hydrologeez.ssm import StateSpaceModel
 
-B = constants.B
-C = constants.C
-
 
 @dataclass(frozen=True)
 class GR6JForcing:
@@ -62,6 +59,10 @@ class GR6J(StateSpaceModel):
         x5: torch.Tensor,
         x6: torch.Tensor,
         nh: int = constants.NH,
+        *,
+        production: nn.Module | None = None,
+        routing: nn.Module | None = None,
+        response: nn.Module | None = None,
     ) -> None:
         super().__init__()
         self.x1 = nn.Parameter(x1)
@@ -70,6 +71,9 @@ class GR6J(StateSpaceModel):
         self.x4 = nn.Parameter(x4)
         self.x5 = nn.Parameter(x5)
         self.x6 = nn.Parameter(x6)
+        self.production = processes.PhysicalProduction() if production is None else production
+        self.routing = processes.PhysicalRouting() if routing is None else routing
+        self.response = processes.PhysicalResponse() if response is None else response
         self.nh = nh
 
     def init_state(
@@ -106,29 +110,34 @@ class GR6J(StateSpaceModel):
         precip = forcing.precip
         pet = forcing.pet
 
-        uh1_ord, uh2_ord = processes.compute_uh_ordinates(x4)
+        (
+            s_after_perc,
+            actual_et,
+            net_rainfall_pn,
+            storage_infiltration,
+            percolation_amount,
+            total_effective_rainfall,
+        ) = self.production(precip, pet, state.production_store, x1)
 
-        s_after_ps, actual_et, net_rainfall_pn, effective_rainfall_pr = processes.production_store_update(
-            precip, pet, state.production_store, x1
+        q9, q1, uh1, uh2 = self.routing(
+            state.uh1,
+            state.uh2,
+            total_effective_rainfall,
+            x4,
         )
-        storage_infiltration = net_rainfall_pn - effective_rainfall_pr
 
-        s_after_perc, percolation_amount = processes.percolation(s_after_ps, x1)
-        total_effective_rainfall = effective_rainfall_pr + percolation_amount
-
-        q9, uh1 = processes.convolve_uh(state.uh1, uh1_ord, B * total_effective_rainfall)
-        q1, uh2 = processes.convolve_uh(state.uh2, uh2_ord, (1.0 - B) * total_effective_rainfall)
-
-        exchange_f = processes.groundwater_exchange(state.routing_store, x2, x3, x5)
-
-        new_routing_store, qr, actual_exchange_routing = processes.routing_store_update(
-            state.routing_store, (1.0 - C) * q9, exchange_f, x3
-        )
-        new_exp_store, qrexp = processes.exponential_store_update(state.exponential_store, C * q9, exchange_f, x6)
-        qd, actual_exchange_direct = processes.direct_branch(q1, exchange_f)
-
-        streamflow = torch.clamp_min(qr + qrexp + qd, 0.0)
-        actual_exchange_total = actual_exchange_routing + actual_exchange_direct + exchange_f
+        (
+            new_routing_store,
+            qr,
+            actual_exchange_routing,
+            new_exp_store,
+            qrexp,
+            qd,
+            actual_exchange_direct,
+            exchange_f,
+            streamflow,
+            actual_exchange_total,
+        ) = self.response(state.routing_store, state.exponential_store, q9, q1, x2, x3, x5, x6)
 
         new_state = State(
             production_store=s_after_perc,
