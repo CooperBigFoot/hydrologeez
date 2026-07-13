@@ -1,6 +1,7 @@
 """HBV-Light torch model, state, process functions, and constants."""
 
 from . import constants
+from .neural import NeuralRecharge
 from .processes import (
     PhysicalResponseProcess,
     PhysicalRoutingProcess,
@@ -29,6 +30,7 @@ from .state import HBVState
 
 __all__ = [
     "HBVState",
+    "NeuralRecharge",
     "PhysicalResponseProcess",
     "PhysicalRoutingProcess",
     "PhysicalSnowProcess",
