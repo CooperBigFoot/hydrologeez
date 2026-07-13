@@ -445,12 +445,16 @@ wheels = [
 
 [[package]]
 name = "hcx"
-version = "0.1.8"
-source = { git = "https://github.com/CooperBigFoot/hcx?rev=b1ecf5f#b1ecf5f79df5e0c5fa868f817ea9193549b41ef8" }
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/60/30/194728c0efa3ddac16829388d0e74257c1fef7498003ab9c0baa4faa6728/hcx-0.1.0.tar.gz", hash = "sha256:333a5229f08d2f04a98e4bf0a119e6f8e7c3ca8724ddb3ba97215497c850ebf2", size = 8426, upload-time = "2026-07-13T15:00:18.555Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dd/58/16d846105c9068935abd7d934fee6c0ff4e3ad4293f9acdd884be4c06bf8/hcx-0.1.0-py3-none-any.whl", hash = "sha256:b4bd28683c83b07d0596facae64bd365a2d670e8b34b83d5911b68bc056b8a04", size = 11303, upload-time = "2026-07-13T15:00:17.476Z" },
 ]
 
 [[package]]
@@ -491,6 +495,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+hcx = [
+    { name = "hcx" },
+]
 hdx = [
     { name = "polars" },
     { name = "pyarrow" },
@@ -499,7 +506,6 @@ hdx = [
 [package.dev-dependencies]
 dev = [
     { name = "bump-my-version" },
-    { name = "hcx" },
     { name = "polars" },
     { name = "pyarrow" },
     { name = "pytest" },
@@ -516,16 +522,16 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "ctrl-freak", specifier = ">=0.2.1" },
+    { name = "hcx", marker = "extra == 'hcx'", specifier = ">=0.1.0" },
     { name = "polars", marker = "extra == 'hdx'", specifier = ">=1.42.1" },
     { name = "pyarrow", marker = "extra == 'hdx'", specifier = ">=24.0.0" },
     { name = "torch", specifier = ">=2.12.1" },
 ]
-provides-extras = ["hdx"]
+provides-extras = ["hdx", "hcx"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "bump-my-version", specifier = ">=1.2.7" },
-    { name = "hcx", git = "https://github.com/CooperBigFoot/hcx?rev=b1ecf5f" },
     { name = "polars", specifier = ">=1.42.1" },
     { name = "pyarrow", specifier = ">=24.0.0" },
     { name = "pytest", specifier = ">=8.3" },
