@@ -14,6 +14,10 @@ from hydrologeez.models.hbv.processes import (
     PhysicalRoutingProcess,
     PhysicalSnowProcess,
     PhysicalSoilProcess,
+    ResponseProcess,
+    RoutingProcess,
+    SnowProcess,
+    SoilProcess,
 )
 from hydrologeez.models.hbv.state import HBVState
 from hydrologeez.ssm import StateSpaceModel
@@ -63,44 +67,69 @@ class HBVModel(StateSpaceModel):
     def __init__(
         self,
         *,
-        tt: torch.Tensor,
-        cfmax: torch.Tensor,
-        sfcf: torch.Tensor,
-        cwh: torch.Tensor,
-        cfr: torch.Tensor,
-        fc: torch.Tensor,
-        lp: torch.Tensor,
-        beta: torch.Tensor,
-        k0: torch.Tensor,
-        k1: torch.Tensor,
-        k2: torch.Tensor,
-        perc: torch.Tensor,
-        uzl: torch.Tensor,
-        maxbas: torch.Tensor,
-        snow: nn.Module | None = None,
-        soil: nn.Module | None = None,
-        response: nn.Module | None = None,
-        routing: nn.Module | None = None,
+        tt: torch.Tensor | None = None,
+        cfmax: torch.Tensor | None = None,
+        sfcf: torch.Tensor | None = None,
+        cwh: torch.Tensor | None = None,
+        cfr: torch.Tensor | None = None,
+        fc: torch.Tensor | None = None,
+        lp: torch.Tensor | None = None,
+        beta: torch.Tensor | None = None,
+        k0: torch.Tensor | None = None,
+        k1: torch.Tensor | None = None,
+        k2: torch.Tensor | None = None,
+        perc: torch.Tensor | None = None,
+        uzl: torch.Tensor | None = None,
+        maxbas: torch.Tensor | None = None,
+        snow: SnowProcess | None = None,
+        soil: SoilProcess | None = None,
+        response: ResponseProcess | None = None,
+        routing: RoutingProcess | None = None,
+        **replacement_parameters: torch.Tensor,
     ) -> None:
         super().__init__()
-        self.tt = nn.Parameter(tt)
-        self.cfmax = nn.Parameter(cfmax)
-        self.sfcf = nn.Parameter(sfcf)
-        self.cwh = nn.Parameter(cwh)
-        self.cfr = nn.Parameter(cfr)
-        self.fc = nn.Parameter(fc)
-        self.lp = nn.Parameter(lp)
-        self.beta = nn.Parameter(beta)
-        self.k0 = nn.Parameter(k0)
-        self.k1 = nn.Parameter(k1)
-        self.k2 = nn.Parameter(k2)
-        self.perc = nn.Parameter(perc)
-        self.uzl = nn.Parameter(uzl)
-        self.maxbas = nn.Parameter(maxbas)
         self.snow = PhysicalSnowProcess() if snow is None else snow
         self.soil = PhysicalSoilProcess() if soil is None else soil
         self.response = PhysicalResponseProcess() if response is None else response
         self.routing = PhysicalRoutingProcess() if routing is None else routing
+
+        self.parameter_bounds: dict[str, tuple[float, float]] = {}
+        for slot in (self.snow, self.soil, self.response, self.routing):
+            for name, bounds in slot.introduces.items():
+                if name in self.parameter_bounds:
+                    raise ValueError(f"parameter {name!r} is introduced by more than one installed HBV slot")
+                self.parameter_bounds[name] = bounds
+
+        parameter_values = {
+            name: value
+            for name, value in {
+                "tt": tt,
+                "cfmax": cfmax,
+                "sfcf": sfcf,
+                "cwh": cwh,
+                "cfr": cfr,
+                "fc": fc,
+                "lp": lp,
+                "beta": beta,
+                "k0": k0,
+                "k1": k1,
+                "k2": k2,
+                "perc": perc,
+                "uzl": uzl,
+                "maxbas": maxbas,
+            }.items()
+            if value is not None
+        }
+        parameter_values.update(replacement_parameters)
+        missing = set(self.parameter_bounds) - set(parameter_values)
+        unexpected = set(parameter_values) - set(self.parameter_bounds)
+        if missing or unexpected:
+            raise ValueError(
+                f"parameter tensors must exactly match installed HBV slots; "
+                f"missing={sorted(missing)!r}, unexpected={sorted(unexpected)!r}"
+            )
+        for name in self.parameter_bounds:
+            self.register_parameter(name, nn.Parameter(parameter_values[name]))
 
     def init_state(self, parameters: Mapping[str, torch.Tensor], *, batch_size: int) -> HBVState:
         """Initialize soil moisture to half of FC and every other store to zero."""

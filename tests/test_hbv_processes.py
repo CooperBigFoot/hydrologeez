@@ -2,11 +2,11 @@ import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import FrozenInstanceError, fields
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 import pytest
 import torch
-from torch import nn
 
 from hydrologeez.models.hbv import (
     HBVFluxes,
@@ -20,6 +20,7 @@ from hydrologeez.models.hbv import (
     RoutingProcess,
     SnowProcess,
     SoilProcess,
+    constants,
     processes,
 )
 from hydrologeez.models.hbv.state import HBVState
@@ -35,10 +36,10 @@ def tensor(value: np.ndarray | float) -> torch.Tensor:
 
 def _slot_model(
     *,
-    snow: nn.Module | None = None,
-    soil: nn.Module | None = None,
-    response: nn.Module | None = None,
-    routing: nn.Module | None = None,
+    snow: SnowProcess | None = None,
+    soil: SoilProcess | None = None,
+    response: ResponseProcess | None = None,
+    routing: RoutingProcess | None = None,
 ) -> HBVModel:
     return HBVModel(
         tt=tensor(0.0),
@@ -71,6 +72,12 @@ def _slot_forcing() -> HBVForcing:
 
 
 class NoRechargeSoil(SoilProcess):
+    introduces: ClassVar[dict[str, tuple[float, float]]] = {
+        "fc": (50.0, 700.0),
+        "lp": (0.3, 1.0),
+        "beta": (1.0, 6.0),
+    }
+
     def forward(
         self,
         soil_input: torch.Tensor,
@@ -86,12 +93,108 @@ class NoRechargeSoil(SoilProcess):
 def test_process_slot_contracts() -> None:
     contracts = (SnowProcess, SoilProcess, ResponseProcess, RoutingProcess)
     physical = (PhysicalSnowProcess, PhysicalSoilProcess, PhysicalResponseProcess, PhysicalRoutingProcess)
+    expected = (
+        {
+            "tt": (-2.5, 2.5),
+            "cfmax": (0.5, 10.0),
+            "sfcf": (0.4, 1.4),
+            "cwh": (0.0, 0.2),
+            "cfr": (0.0, 0.2),
+        },
+        {"fc": (50.0, 700.0), "lp": (0.3, 1.0), "beta": (1.0, 6.0)},
+        {
+            "k0": (0.05, 0.99),
+            "k1": (0.01, 0.5),
+            "k2": (0.001, 0.2),
+            "perc": (0.0, 6.0),
+            "uzl": (0.0, 100.0),
+        },
+        {"maxbas": (1.0, 7.0)},
+    )
 
-    for contract, implementation in zip(contracts, physical, strict=True):
+    for contract, implementation, introduces in zip(contracts, physical, expected, strict=True):
         assert inspect.isabstract(contract)
         assert issubclass(contract, Process)
         assert implementation.__bases__ == (contract,)
-        assert implementation.introduces == {}
+        assert implementation.introduces == introduces
+        assert "introduces" in implementation.__dict__
+    assert len({id(implementation.introduces) for implementation in physical}) == len(physical)
+
+
+def test_default_parameter_bounds_match_canonical_constants() -> None:
+    model = _slot_model()
+    expected = {name: constants.PARAM_BOUNDS[name] for name in constants.PARAM_NAMES}
+
+    assert model.parameter_bounds == expected
+    assert tuple(model.parameter_bounds) == constants.PARAM_NAMES == PARAM_NAMES
+    assert tuple(dict(model.named_parameters())) == tuple(model.parameter_bounds)
+
+
+def test_replacing_soil_changes_parameter_names_bounds_and_registration() -> None:
+    class ReplacementSoil(SoilProcess):
+        introduces: ClassVar[dict[str, tuple[float, float]]] = {
+            "fc": (25.0, 800.0),
+            "lp": (0.2, 0.9),
+            "soil_scale": (0.0, 2.0),
+        }
+
+        def forward(
+            self,
+            soil_input: torch.Tensor,
+            pet: torch.Tensor,
+            soil_moisture: torch.Tensor,
+            parameters: Mapping[str, torch.Tensor],
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            del pet
+            recharge = soil_input * parameters["soil_scale"]
+            return soil_moisture, recharge, torch.zeros_like(soil_moisture)
+
+    default = _slot_model()
+    replacement = ReplacementSoil()
+    injected = HBVModel(
+        tt=tensor(0.0),
+        cfmax=tensor(3.0),
+        sfcf=tensor(1.0),
+        cwh=tensor(0.1),
+        cfr=tensor(0.05),
+        fc=tensor(100.0),
+        lp=tensor(0.7),
+        k0=tensor(0.3),
+        k1=tensor(0.1),
+        k2=tensor(0.05),
+        perc=tensor(2.0),
+        uzl=tensor(1.0),
+        maxbas=tensor(3.0),
+        soil_scale=tensor(0.5),
+        soil=replacement,
+    )
+
+    expected_names = (
+        "tt",
+        "cfmax",
+        "sfcf",
+        "cwh",
+        "cfr",
+        "fc",
+        "lp",
+        "soil_scale",
+        "k0",
+        "k1",
+        "k2",
+        "perc",
+        "uzl",
+        "maxbas",
+    )
+    assert injected.soil is replacement
+    assert tuple(injected.parameter_bounds) == expected_names
+    assert set(injected.parameter_bounds) != set(default.parameter_bounds)
+    assert injected.parameter_bounds["fc"] == (25.0, 800.0)
+    assert injected.parameter_bounds["lp"] == (0.2, 0.9)
+    assert injected.parameter_bounds["fc"] != default.parameter_bounds["fc"]
+    assert injected.parameter_bounds["lp"] != default.parameter_bounds["lp"]
+    assert tuple(dict(injected.named_parameters())) == expected_names
+    assert "beta" not in dict(injected.named_parameters())
+    torch.testing.assert_close(injected.soil_scale, tensor(0.5))
 
 
 def test_process_introduces_preserves_insertion_order() -> None:

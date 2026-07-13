@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Mapping
+from typing import ClassVar
 
 import torch
 
@@ -212,6 +213,14 @@ class RoutingProcess(Process):
 
 
 class PhysicalSnowProcess(SnowProcess):
+    introduces: ClassVar[dict[str, tuple[float, float]]] = {
+        "tt": (-2.5, 2.5),
+        "cfmax": (0.5, 10.0),
+        "sfcf": (0.4, 1.4),
+        "cwh": (0.0, 0.2),
+        "cfr": (0.0, 0.2),
+    }
+
     def forward(
         self,
         precip: torch.Tensor,
@@ -249,6 +258,12 @@ class PhysicalSnowProcess(SnowProcess):
 
 
 class PhysicalSoilProcess(SoilProcess):
+    introduces: ClassVar[dict[str, tuple[float, float]]] = {
+        "fc": (50.0, 700.0),
+        "lp": (0.3, 1.0),
+        "beta": (1.0, 6.0),
+    }
+
     def forward(
         self,
         soil_input: torch.Tensor,
@@ -270,6 +285,14 @@ class PhysicalSoilProcess(SoilProcess):
 
 
 class PhysicalResponseProcess(ResponseProcess):
+    introduces: ClassVar[dict[str, tuple[float, float]]] = {
+        "k0": (0.05, 0.99),
+        "k1": (0.01, 0.5),
+        "k2": (0.001, 0.2),
+        "perc": (0.0, 6.0),
+        "uzl": (0.0, 100.0),
+    }
+
     def forward(
         self,
         upper_zone: torch.Tensor,
@@ -295,6 +318,10 @@ class PhysicalResponseProcess(ResponseProcess):
 
 
 class PhysicalRoutingProcess(RoutingProcess):
+    introduces: ClassVar[dict[str, tuple[float, float]]] = {
+        "maxbas": (1.0, 7.0),
+    }
+
     def forward(
         self,
         routing_buffer: torch.Tensor,
