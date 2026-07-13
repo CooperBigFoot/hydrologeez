@@ -63,7 +63,7 @@ def _tensor(array: Any) -> torch.Tensor:
 
 
 def _model(parameter_row: np.ndarray) -> HBVModel:
-    return HBVModel(**dict(zip(PARAMETER_NAMES, _tensor(parameter_row), strict=True)))
+    return HBVModel(**dict(zip(PARAMETER_NAMES, _tensor(parameter_row), strict=True)))  # ty: ignore[invalid-argument-type, unused-ignore-comment]
 
 
 def _forcing(fixture: np.lib.npyio.NpzFile, index: torch.Tensor) -> HBVForcing:

@@ -1,12 +1,22 @@
-from collections.abc import Callable
-from dataclasses import FrozenInstanceError
+from collections.abc import Callable, Mapping
+from dataclasses import FrozenInstanceError, fields
 from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
+from torch import nn
 
-from hydrologeez.models.hbv import processes
+from hydrologeez.models.hbv import (
+    HBVFluxes,
+    HBVForcing,
+    HBVModel,
+    PhysicalResponseProcess,
+    PhysicalRoutingProcess,
+    PhysicalSnowProcess,
+    PhysicalSoilProcess,
+    processes,
+)
 from hydrologeez.models.hbv.state import HBVState
 
 GOLDEN = Path(__file__).parent / "golden" / "hbv.npz"
@@ -15,6 +25,130 @@ PARAM_NAMES = ("tt", "cfmax", "sfcf", "cwh", "cfr", "fc", "lp", "beta", "k0", "k
 
 def tensor(value: np.ndarray | float) -> torch.Tensor:
     return torch.as_tensor(np.array(value, copy=True), dtype=torch.float64, device="cpu")
+
+
+def _slot_model(
+    *,
+    snow: nn.Module | None = None,
+    soil: nn.Module | None = None,
+    response: nn.Module | None = None,
+    routing: nn.Module | None = None,
+) -> HBVModel:
+    return HBVModel(
+        tt=tensor(0.0),
+        cfmax=tensor(3.0),
+        sfcf=tensor(1.0),
+        cwh=tensor(0.1),
+        cfr=tensor(0.05),
+        fc=tensor(100.0),
+        lp=tensor(0.7),
+        beta=tensor(1.0),
+        k0=tensor(0.3),
+        k1=tensor(0.1),
+        k2=tensor(0.05),
+        perc=tensor(2.0),
+        uzl=tensor(1.0),
+        maxbas=tensor(3.0),
+        snow=snow,
+        soil=soil,
+        response=response,
+        routing=routing,
+    )
+
+
+def _slot_forcing() -> HBVForcing:
+    return HBVForcing(
+        precip=torch.full((1, 12), 10.0, dtype=torch.float64, device="cpu"),
+        pet=torch.zeros((1, 12), dtype=torch.float64, device="cpu"),
+        temp=torch.full((1, 12), 5.0, dtype=torch.float64, device="cpu"),
+    )
+
+
+class NoRechargeSoil(nn.Module):
+    def forward(
+        self,
+        soil_input: torch.Tensor,
+        pet: torch.Tensor,
+        soil_moisture: torch.Tensor,
+        parameters: Mapping[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        del soil_input, pet, parameters
+        zeros = torch.zeros_like(soil_moisture)
+        return soil_moisture, zeros, zeros
+
+
+def test_physical_slots_are_registered_parameterless_and_match_explicit_defaults() -> None:
+    implicit = _slot_model()
+    explicit = _slot_model(
+        snow=PhysicalSnowProcess(),
+        soil=PhysicalSoilProcess(),
+        response=PhysicalResponseProcess(),
+        routing=PhysicalRoutingProcess(),
+    )
+
+    assert isinstance(implicit.snow, PhysicalSnowProcess)
+    assert isinstance(implicit.soil, PhysicalSoilProcess)
+    assert isinstance(implicit.response, PhysicalResponseProcess)
+    assert isinstance(implicit.routing, PhysicalRoutingProcess)
+    assert {"snow", "soil", "response", "routing"} <= dict(implicit.named_modules()).keys()
+    for slot in (implicit.snow, implicit.soil, implicit.response, implicit.routing):
+        assert tuple(slot.parameters()) == ()
+        assert tuple(slot.buffers()) == ()
+    assert tuple(dict(implicit.named_parameters())) == PARAM_NAMES
+    assert tuple(dict(explicit.named_parameters())) == PARAM_NAMES
+
+    implicit_observations, implicit_fluxes, implicit_state = implicit.run(_slot_forcing(), return_fluxes=True)
+    explicit_observations, explicit_fluxes, explicit_state = explicit.run(_slot_forcing(), return_fluxes=True)
+    torch.testing.assert_close(implicit_observations, explicit_observations, rtol=1e-12, atol=1e-12)
+    for field in fields(HBVFluxes):
+        torch.testing.assert_close(
+            getattr(implicit_fluxes, field.name),
+            getattr(explicit_fluxes, field.name),
+            rtol=1e-12,
+            atol=1e-12,
+        )
+    for field in fields(HBVState):
+        torch.testing.assert_close(
+            getattr(implicit_state, field.name),
+            getattr(explicit_state, field.name),
+            rtol=1e-12,
+            atol=1e-12,
+        )
+
+
+def test_injected_soil_changes_transition_and_run() -> None:
+    replacement = NoRechargeSoil()
+    default = _slot_model()
+    injected = _slot_model(soil=replacement)
+    assert injected.soil is replacement
+
+    direct_forcing = HBVForcing(
+        precip=tensor(np.array([10.0])),
+        pet=tensor(np.array([0.0])),
+        temp=tensor(np.array([5.0])),
+    )
+    default_state = default.init_state(dict(default.named_parameters()), batch_size=1)
+    injected_state = injected.init_state(dict(injected.named_parameters()), batch_size=1)
+    default_next, default_fluxes = default.transition(
+        default_state,
+        direct_forcing,
+        dict(default.named_parameters()),
+    )
+    injected_next, injected_fluxes = injected.transition(
+        injected_state,
+        direct_forcing,
+        dict(injected.named_parameters()),
+    )
+    assert torch.count_nonzero(default_fluxes.recharge)
+    torch.testing.assert_close(injected_fluxes.recharge, torch.zeros_like(injected_fluxes.recharge))
+    assert not torch.allclose(default_next.zone_sm, injected_next.zone_sm)
+
+    default_observations, default_run_fluxes, default_final = default.run(_slot_forcing(), return_fluxes=True)
+    injected_observations, injected_run_fluxes, injected_final = injected.run(_slot_forcing(), return_fluxes=True)
+    assert torch.count_nonzero(default_run_fluxes.recharge)
+    torch.testing.assert_close(injected_run_fluxes.recharge, torch.zeros_like(injected_run_fluxes.recharge))
+    assert not torch.allclose(default_observations, injected_observations)
+    assert not torch.allclose(default_final.zone_sm, injected_final.zone_sm)
 
 
 def assert_golden(actual: torch.Tensor, expected: np.ndarray) -> None:

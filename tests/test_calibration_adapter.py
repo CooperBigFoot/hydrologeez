@@ -32,7 +32,7 @@ def _gr6j(*, nh: int = 17) -> GR6J:
 def _hbv() -> HBVModel:
     values = (2.0, 9.0, 0.7, 0.15, 0.03, 600.0, 0.4, 5.0, 0.8, 0.2, 0.1, 4.0, 80.0, 3.0)
     return HBVModel(
-        **{name: torch.tensor(value, dtype=torch.float64) for name, value in zip(HBV_SPEC.names, values, strict=True)}
+        **{name: torch.tensor(value, dtype=torch.float64) for name, value in zip(HBV_SPEC.names, values, strict=True)}  # ty: ignore[invalid-argument-type]
     )
 
 
