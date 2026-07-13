@@ -172,14 +172,14 @@ class StateSpaceModel(nn.Module, abc.ABC):
         _validate_parameters(resolved, batch_size, time_steps)
 
         if warmup is None:
-            state = self.init_state(resolved, batch_size=batch_size)
+            state = self.init_state(_parameters_at(resolved, 0), batch_size=batch_size)
         else:
             warmup_batch, warmup_steps = _forcing_shape(warmup, allow_empty=True)
             if warmup_batch != batch_size:
                 raise ValueError("warmup batch size must match main forcing")
             resolved_warmup = resolved if warmup_parameters is None else warmup_parameters
             _validate_parameters(resolved_warmup, batch_size, warmup_steps)
-            state = self.init_state(resolved_warmup, batch_size=batch_size)
+            state = self.init_state(_parameters_at(resolved_warmup, 0), batch_size=batch_size)
             with torch.no_grad():
                 for time in range(warmup_steps):
                     state, _ = self.transition(
