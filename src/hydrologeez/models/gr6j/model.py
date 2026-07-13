@@ -66,15 +66,36 @@ class GR6J(StateSpaceModel):
         response: processes.ResponseProcess | None = None,
     ) -> None:
         super().__init__()
-        self.x1 = nn.Parameter(x1)
-        self.x2 = nn.Parameter(x2)
-        self.x3 = nn.Parameter(x3)
-        self.x4 = nn.Parameter(x4)
-        self.x5 = nn.Parameter(x5)
-        self.x6 = nn.Parameter(x6)
         self.production = processes.PhysicalProduction() if production is None else production
         self.routing = processes.PhysicalRouting() if routing is None else routing
         self.response = processes.PhysicalResponse() if response is None else response
+
+        canonical_values_by_name = {
+            "x1": x1,
+            "x2": x2,
+            "x3": x3,
+            "x4": x4,
+            "x5": x5,
+            "x6": x6,
+        }
+        slot_schemas = (
+            (self.production, ("x1",)),
+            (self.routing, ("x4",)),
+            (self.response, ("x2", "x3", "x5", "x6")),
+        )
+        parameter_values_by_name: dict[str, torch.Tensor] = {}
+        for slot, canonical_names in slot_schemas:
+            introduced_names = tuple(slot.introduces)
+            if len(introduced_names) != len(canonical_names):
+                raise ValueError(
+                    f"installed {type(slot).__name__} must introduce exactly "
+                    f"{len(canonical_names)} parameter(s), got {len(introduced_names)}"
+                )
+            for index, introduced_name in enumerate(introduced_names):
+                parameter_values_by_name[introduced_name] = canonical_values_by_name[canonical_names[index]]
+
+        for name in self.parameter_bounds:
+            self.register_parameter(name, nn.Parameter(parameter_values_by_name[name]))
         self.nh = nh
 
     @property

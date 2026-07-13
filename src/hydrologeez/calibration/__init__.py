@@ -1,9 +1,6 @@
 """Torch gradient calibration and transitional derivative-free calibration."""
 
 from hydrologeez.calibration.adapter import (
-    GR6J_SPEC,
-    HBV_SPEC,
-    PARAM_NAMES,
     ParamSpec,
     array_to_model,
     array_to_parameters,
@@ -24,10 +21,7 @@ from hydrologeez.calibration.evolutionary import (
 from hydrologeez.calibration.gradient import calibrate_gradient
 
 __all__ = [
-    "PARAM_NAMES",
     "ParamSpec",
-    "GR6J_SPEC",
-    "HBV_SPEC",
     "bounds_array",
     "model_to_flat",
     "flat_to_model",

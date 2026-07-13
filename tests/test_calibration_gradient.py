@@ -9,8 +9,6 @@ from torch import nn
 
 import hydrologeez.calibration as calibration
 from hydrologeez.calibration.adapter import (
-    GR6J_SPEC,
-    HBV_SPEC,
     ParamSpec,
     array_to_model,
     bounds_array,
@@ -23,13 +21,39 @@ from hydrologeez.models.hbv.model import HBVForcing, HBVModel
 
 DTYPE = torch.float64
 
+HBV_PARAMETER_NAMES = (
+    "tt",
+    "cfmax",
+    "sfcf",
+    "cwh",
+    "cfr",
+    "fc",
+    "lp",
+    "beta",
+    "k0",
+    "k1",
+    "k2",
+    "perc",
+    "uzl",
+    "maxbas",
+)
+
 
 def _gr6j(theta: torch.Tensor) -> GR6J:
-    return GR6J(*(value for value in theta))
+    return GR6J(
+        x1=theta[0],
+        x2=theta[2],
+        x3=theta[3],
+        x4=theta[1],
+        x5=theta[4],
+        x6=theta[5],
+    )
 
 
 def _hbv(theta: torch.Tensor) -> HBVModel:
-    return HBVModel(**dict(zip(HBV_SPEC.names, theta, strict=True)))  # ty: ignore[invalid-argument-type, unused-ignore-comment]
+    return HBVModel(
+        **dict(zip(HBV_PARAMETER_NAMES, theta, strict=True))  # ty: ignore[invalid-argument-type, unused-ignore-comment]
+    )
 
 
 def _gr6j_forcing(steps: int, *, requires_grad: bool = False) -> GR6JForcing:
@@ -67,10 +91,11 @@ def _assert_inside(model: nn.Module, spec: ParamSpec) -> None:
 def test_gr6j_recovers_seeded_synthetic_case() -> None:
     torch.manual_seed(1101)
     warmup, main = _gr6j_forcing(6), _gr6j_forcing(36)
-    truth = torch.tensor([420.0, -0.8, 110.0, 2.2, 0.1, 14.0], dtype=DTYPE)
-    start = torch.tensor([650.0, 0.3, 180.0, 3.1, -2.0, 20.0], dtype=DTYPE)
+    truth = torch.tensor([420.0, 2.2, -0.8, 110.0, 0.1, 14.0], dtype=DTYPE)
+    start = torch.tensor([650.0, 3.1, 0.3, 180.0, -2.0, 20.0], dtype=DTYPE)
     true_model = array_to_model(_gr6j(truth), truth)
     template = array_to_model(true_model, start)
+    spec = ParamSpec.from_model(template)
     with torch.no_grad():
         observed = true_model.run(main, warmup=warmup)
         baseline = rmse(observed, template.run(main, warmup=warmup))
@@ -82,19 +107,21 @@ def test_gr6j_recovers_seeded_synthetic_case() -> None:
     with torch.no_grad():
         final_loss = rmse(observed, calibrated.run(main, warmup=warmup))
     _assert_history(history, 100)
-    _assert_inside(calibrated, GR6J_SPEC)
+    _assert_inside(calibrated, spec)
     assert final_loss < 0.75 * baseline and final_loss < 0.75 * history[0]
-    assert _normalized_error(final_theta, truth, GR6J_SPEC) < _normalized_error(start, truth, GR6J_SPEC)
+    assert _normalized_error(final_theta, truth, spec) < _normalized_error(start, truth, spec)
 
 
 def test_hbv_recovers_seeded_synthetic_case() -> None:
     torch.manual_seed(1102)
     warmup, main = _hbv_forcing(6), _hbv_forcing(40)
     truth = torch.tensor([0.2, 4.5, 0.95, 0.08, 0.06, 320.0, 0.7, 2.5, 0.35, 0.12, 0.04, 2.0, 35.0, 3.6], dtype=DTYPE)
-    lo, hi = bounds_array(HBV_SPEC, dtype=DTYPE)
+    true_model = _hbv(truth)
+    hbv_spec = ParamSpec.from_model(true_model)
+    lo, hi = bounds_array(hbv_spec, dtype=DTYPE)
     start = truth + 0.08 * (hi - lo) * torch.tensor([1, -1, 1, -1, 1, 1, -1, 1, -1, 1, -1, 1, -1, 1], dtype=DTYPE)
-    true_model = array_to_model(_hbv(truth), truth, HBV_SPEC)
-    template = array_to_model(true_model, start, HBV_SPEC)
+    true_model = array_to_model(true_model, truth, hbv_spec)
+    template = array_to_model(true_model, start, hbv_spec)
     with torch.no_grad():
         observed = true_model.run(main, warmup=warmup)
         baseline = rmse(observed, template.run(main, warmup=warmup))
@@ -107,15 +134,15 @@ def test_hbv_recovers_seeded_synthetic_case() -> None:
         warmup=warmup,
         n_steps=100,
         learning_rate=5e-2,
-        param_spec=HBV_SPEC,
+        param_spec=hbv_spec,
     )
-    final_theta = params_to_array(calibrated, HBV_SPEC)
+    final_theta = params_to_array(calibrated, hbv_spec)
     with torch.no_grad():
         final_loss = rmse(observed, calibrated.run(main, warmup=warmup))
     _assert_history(history, 100)
-    _assert_inside(calibrated, HBV_SPEC)
+    _assert_inside(calibrated, hbv_spec)
     assert final_loss < 0.75 * baseline and final_loss < 0.75 * history[0]
-    assert _normalized_error(final_theta, truth, HBV_SPEC) < _normalized_error(start, truth, HBV_SPEC)
+    assert _normalized_error(final_theta, truth, hbv_spec) < _normalized_error(start, truth, hbv_spec)
 
 
 def test_transforms_are_literal_round_trip_safe_and_differentiable() -> None:
@@ -138,8 +165,8 @@ def test_transforms_are_literal_round_trip_safe_and_differentiable() -> None:
 def test_functional_calibration_does_not_mutate_template() -> None:
     torch.manual_seed(1103)
     forcing = _gr6j_forcing(10)
-    truth = torch.tensor([420.0, -0.8, 110.0, 2.2, 0.1, 14.0], dtype=DTYPE)
-    template = _gr6j(torch.tensor([600.0, 0.0, 160.0, 3.0, -0.5, 19.0], dtype=DTYPE))
+    truth = torch.tensor([420.0, 2.2, -0.8, 110.0, 0.1, 14.0], dtype=DTYPE)
+    template = _gr6j(torch.tensor([600.0, 3.0, 0.0, 160.0, -0.5, 19.0], dtype=DTYPE))
     before = params_to_array(template).detach().clone()
     with torch.no_grad():
         observed = _gr6j(truth).run(forcing)
@@ -153,7 +180,7 @@ def test_functional_calibration_does_not_mutate_template() -> None:
 def test_warmup_is_no_grad_and_main_forcing_is_differentiable() -> None:
     torch.manual_seed(1104)
     warmup, main = _gr6j_forcing(4, requires_grad=True), _gr6j_forcing(8, requires_grad=True)
-    template = _gr6j(torch.tensor([420.0, -0.8, 110.0, 2.2, 0.1, 14.0], dtype=DTYPE))
+    template = _gr6j(torch.tensor([420.0, 2.2, -0.8, 110.0, 0.1, 14.0], dtype=DTYPE))
     with torch.no_grad():
         observed = template.run(
             GR6JForcing(main.precip.detach(), main.pet.detach()),
@@ -174,7 +201,7 @@ def test_optimizer_class_and_configured_factory(
 ) -> None:
     torch.manual_seed(1105)
     forcing = _gr6j_forcing(5)
-    template = _gr6j(torch.tensor([420.0, -0.8, 110.0, 2.2, 0.1, 14.0], dtype=DTYPE))
+    template = _gr6j(torch.tensor([420.0, 2.2, -0.8, 110.0, 0.1, 14.0], dtype=DTYPE))
     with torch.no_grad():
         observed = template.run(forcing)
     _, history = calibrate_gradient(template, forcing, observed, loss_term=rmse, n_steps=2, optimizer=optimizer)
@@ -184,7 +211,7 @@ def test_optimizer_class_and_configured_factory(
 def test_input_and_loss_validation() -> None:
     torch.manual_seed(1106)
     forcing = _gr6j_forcing(4)
-    model = _gr6j(torch.tensor([420.0, -0.8, 110.0, 2.2, 0.1, 14.0], dtype=DTYPE))
+    model = _gr6j(torch.tensor([420.0, 2.2, -0.8, 110.0, 0.1, 14.0], dtype=DTYPE))
     observed = model.run(forcing).detach()
     with pytest.raises(ValueError, match="n_steps"):
         calibrate_gradient(model, forcing, observed, loss_term=rmse, n_steps=0)
