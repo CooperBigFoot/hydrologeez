@@ -2,11 +2,13 @@ import subprocess
 import sys
 
 import torch
-from hcx import assert_conforms, make_synthetic_batch
+from hcx import Point, assert_conforms, make_synthetic_batch
+from torch import nn
 
 from hydrologeez.hcx import GR6JForecastModel, HBVForecastModel
+from hydrologeez.hybrid import NeuralParameterForecastModel
 from hydrologeez.models.gr6j import GR6J
-from hydrologeez.models.hbv import HBVModel
+from hydrologeez.models.hbv import HBVForcing, HBVModel
 
 
 def _scalar(value: float) -> torch.Tensor:
@@ -65,6 +67,57 @@ def test_hbv_hcx_conformance() -> None:
     )
 
     assert_conforms(model, batch)
+
+
+def test_neural_parameter_hbv_hcx_conformance() -> None:
+    torch.manual_seed(1729)
+    dynamic_inputs = ("precip", "pet", "temp")
+    static_inputs = ("area",)
+    batch = make_synthetic_batch(
+        input_length=8,
+        output_length=3,
+        scalar_dynamic_features=len(dynamic_inputs),
+        scalar_static_features=len(static_inputs),
+        include_gridded_dynamic=False,
+        include_gridded_static=False,
+        seed=1729,
+    )
+    hbv = HBVModel(
+        tt=_scalar(0.0),
+        cfmax=_scalar(3.0),
+        sfcf=_scalar(1.0),
+        cwh=_scalar(0.1),
+        cfr=_scalar(0.05),
+        fc=_scalar(150.0),
+        lp=_scalar(0.7),
+        beta=_scalar(2.0),
+        k0=_scalar(0.2),
+        k1=_scalar(0.05),
+        k2=_scalar(0.01),
+        perc=_scalar(1.0),
+        uzl=_scalar(10.0),
+        maxbas=_scalar(3.0),
+    )
+    network = nn.Sequential(
+        nn.Linear(len(dynamic_inputs) + len(static_inputs), 8),
+        nn.Tanh(),
+        nn.Linear(8, len(hbv.parameter_bounds)),
+    )
+    model = NeuralParameterForecastModel(
+        hbv,
+        network,
+        dynamic_inputs=dynamic_inputs,
+        static_inputs=static_inputs,
+        physics_forcing={"precip": "precip", "pet": "pet", "temp": "temp"},
+        network_dynamic_inputs=dynamic_inputs,
+        network_static_inputs=static_inputs,
+        forcing_factory=HBVForcing,
+        output_specification=Point(),
+    )
+
+    forecast = assert_conforms(model, batch)
+
+    assert forecast.prediction.shape == (batch.target.shape[0], batch.target.shape[-1])
 
 
 def test_plain_hydrologeez_import_does_not_import_hcx() -> None:
