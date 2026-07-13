@@ -1,7 +1,12 @@
+from dataclasses import replace
+
 import pytest
 import torch
+from hcx import Forecast, Point, make_synthetic_batch
+from torch import nn
 
 from hydrologeez.hybrid import (
+    NeuralParameterForecastModel,
     bounded_parameters,
     select_features,
     select_network_inputs,
@@ -291,3 +296,73 @@ def test_bounded_parameters_preserves_dtype_device_and_global_default(
     assert torch.get_default_dtype() == default_dtype
     assert all(value.dtype == dtype for value in parameters.values())
     assert all(value.device == device for value in parameters.values())
+
+
+class _TimeVaryingParameterNetwork(nn.Module):
+    def __init__(self, input_width: int, parameter_width: int) -> None:
+        super().__init__()
+        self.linear = nn.Linear(input_width, parameter_width)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        return self.linear(inputs)
+
+
+def test_neural_parameter_forecast_model_returns_point_forecast() -> None:
+    batch = make_synthetic_batch(
+        batch_size=2,
+        input_length=5,
+        output_length=3,
+        scalar_dynamic_features=3,
+        scalar_static_features=1,
+        include_gridded_dynamic=False,
+        include_gridded_static=False,
+        dtype=torch.float64,
+    )
+    scalar_dynamic = torch.tensor(
+        [
+            [
+                [4.0, 0.5, 2.0],
+                [6.0, 0.7, 3.0],
+                [0.0, 0.8, 4.0],
+                [3.0, 0.6, 1.0],
+                [2.0, 0.4, 2.0],
+            ],
+            [
+                [1.0, 0.4, 1.0],
+                [8.0, 0.6, 2.0],
+                [3.0, 0.7, 3.0],
+                [5.0, 0.5, 4.0],
+                [0.0, 0.3, 2.0],
+            ],
+        ],
+        dtype=batch.target.dtype,
+        device=batch.target.device,
+    )
+    batch = replace(batch, scalar_dynamic=scalar_dynamic)
+    hbv = _model().to(dtype=batch.target.dtype, device=batch.target.device)
+    network = _TimeVaryingParameterNetwork(
+        input_width=4,
+        parameter_width=len(hbv.parameter_bounds),
+    ).to(dtype=batch.target.dtype, device=batch.target.device)
+    model = NeuralParameterForecastModel(
+        hbv,
+        network,
+        dynamic_inputs=("precip", "pet", "temp"),
+        static_inputs=("area",),
+        physics_forcing={"precip": "precip", "pet": "pet", "temp": "temp"},
+        network_dynamic_inputs=("precip", "pet", "temp"),
+        network_static_inputs=("area",),
+        forcing_factory=HBVForcing,
+        output_specification=Point(),
+    )
+
+    forecast = model(batch)
+
+    assert isinstance(forecast, Forecast)
+    assert forecast.prediction.shape == (batch.target.shape[0], batch.target.shape[-1])
+    assert forecast.prediction.dtype == batch.target.dtype
+    assert forecast.prediction.device == batch.target.device
+    assert torch.isfinite(forecast.prediction).all()
+    assert forecast.sample_ids is batch.metadata.sample_ids
+    assert forecast.input_end_indices is batch.metadata.input_end_indices
+    assert forecast.target_fill_mask is batch.metadata.target_fill_mask
