@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
+from torch import nn
+
+from hydrologeez.ssm import StateSpaceModel
+
+if TYPE_CHECKING:
+    import hcx
 
 
 def _ordered_names(names: Sequence[str], *, quadrant: str) -> tuple[str, ...]:
@@ -140,3 +147,119 @@ def bounded_parameters(
         interior_upper = torch.nextafter(upper, lower)
         parameters[name] = torch.clamp(mapped, min=interior_lower, max=interior_upper)
     return parameters
+
+
+class NeuralParameterForecastModel(nn.Module):
+    """Run one neural-parameterized state-space model as an hcx point forecast."""
+
+    def __init__(
+        self,
+        wrapped_model: StateSpaceModel,
+        network: nn.Module,
+        *,
+        dynamic_inputs: Sequence[str],
+        static_inputs: Sequence[str],
+        physics_forcing: Mapping[str, str | int],
+        network_dynamic_inputs: Sequence[str | int],
+        network_static_inputs: Sequence[str | int],
+        forcing_factory: Callable[..., Any],
+        output_specification: hcx.OutputSpecification[Any],
+    ) -> None:
+        super().__init__()
+        if not physics_forcing:
+            raise ValueError("at least one physics-forcing field is required")
+        if output_specification.raw_head_width != 1:
+            raise ValueError("the discharge adapter requires a point output specification of width 1")
+        parameter_bounds = getattr(wrapped_model, "parameter_bounds", None)
+        if not isinstance(parameter_bounds, Mapping):
+            raise TypeError("wrapped_model must expose parameter_bounds")
+
+        self.wrapped_model = wrapped_model
+        self.network = network
+        self.parameter_bounds = cast(Mapping[str, tuple[float, float]], parameter_bounds)
+        self.dynamic_inputs = tuple(dynamic_inputs)
+        self.static_inputs = tuple(static_inputs)
+        self.physics_forcing = tuple(physics_forcing.items())
+        self.network_dynamic_inputs = tuple(network_dynamic_inputs)
+        self.network_static_inputs = tuple(network_static_inputs)
+        self.forcing_factory = forcing_factory
+        self.output_specification = output_specification
+        self.consumed_quadrants = (
+            ("scalar_dynamic", "scalar_static") if self.network_static_inputs else ("scalar_dynamic",)
+        )
+
+    def forward(self, batch: hcx.Batch) -> hcx.Forecast:
+        scalar_dynamic = batch.scalar_dynamic
+        if scalar_dynamic is None:
+            raise ValueError("scalar_dynamic is required for physics forcing")
+        if batch.target.ndim != 2:
+            raise ValueError("target must have shape [B, T_out]")
+        if batch.target.shape[0] != scalar_dynamic.shape[0]:
+            raise ValueError("target and scalar_dynamic batch sizes must match")
+
+        forcing_fields = tuple(field for field, _ in self.physics_forcing)
+        forcing_selectors = tuple(selector for _, selector in self.physics_forcing)
+        selected_forcing, _ = select_features(
+            scalar_dynamic,
+            batch.scalar_static,
+            dynamic_inputs=self.dynamic_inputs,
+            static_inputs=self.static_inputs,
+            dynamic_features=forcing_selectors,
+        )
+        assert selected_forcing is not None
+        forcing_tensor: torch.Tensor = selected_forcing
+
+        network_inputs = select_network_inputs(
+            scalar_dynamic,
+            batch.scalar_static,
+            dynamic_inputs=self.dynamic_inputs,
+            static_inputs=self.static_inputs,
+            dynamic_features=self.network_dynamic_inputs,
+            static_features=self.network_static_inputs,
+        )
+        raw_parameters = self.network(network_inputs)
+        if not isinstance(raw_parameters, torch.Tensor):
+            raise TypeError("network must return a torch.Tensor")
+
+        batch_size, input_length = scalar_dynamic.shape[:2]
+        if raw_parameters.ndim != 3 or raw_parameters.shape[:2] != (batch_size, input_length):
+            raise ValueError("network output must have shape [B, input_length, P] matching scalar_dynamic")
+        parameters = bounded_parameters(raw_parameters, self.parameter_bounds)
+
+        output_length = batch.target.shape[-1]
+        if output_length <= 0:
+            raise ValueError("target output length must be positive")
+        if output_length > input_length:
+            raise ValueError("input sequence is shorter than the requested output sequence")
+        warmup_length = input_length - output_length
+
+        def make_forcing(start: int, stop: int) -> Any:
+            return self.forcing_factory(
+                **{field: forcing_tensor[:, start:stop, index] for index, field in enumerate(forcing_fields)}
+            )
+
+        main_forcing = make_forcing(warmup_length, input_length)
+        main_parameters = {name: value[:, warmup_length:input_length] for name, value in parameters.items()}
+        if warmup_length:
+            warmup_forcing = make_forcing(0, warmup_length)
+            warmup_parameters = {name: value[:, :warmup_length] for name, value in parameters.items()}
+            discharge = self.wrapped_model.run(
+                main_forcing,
+                parameters=main_parameters,
+                warmup=warmup_forcing,
+                warmup_parameters=warmup_parameters,
+            )
+        else:
+            discharge = self.wrapped_model.run(main_forcing, parameters=main_parameters)
+
+        discharge = discharge[:, -output_length:]
+        expected_shape = (batch_size, output_length)
+        if discharge.shape != expected_shape:
+            raise ValueError(f"wrapped model discharge must have shape {expected_shape}; got {tuple(discharge.shape)}")
+        point_parameters = self.output_specification.parameterize(discharge[..., None])
+        return self.output_specification.populate_forecast(
+            point_parameters,
+            sample_ids=batch.metadata.sample_ids,
+            input_end_indices=batch.metadata.input_end_indices,
+            target_fill_mask=batch.metadata.target_fill_mask,
+        )
