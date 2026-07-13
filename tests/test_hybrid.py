@@ -63,6 +63,56 @@ def _constant_time_parameters(
     return {name: value.expand(batch_size, time_steps).clone() for name, value in parameters.items()}
 
 
+def _component_routing_oracles(
+    model: HBVModel,
+    forcing: HBVForcing,
+    parameters: dict[str, torch.Tensor],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    batch_size, n_components, time_steps = parameters["maxbas"].shape
+    flat_batch_size = batch_size * n_components
+    initial_parameters = {name: value[:, :, 0].reshape(flat_batch_size) for name, value in parameters.items()}
+    state = model.init_state(initial_parameters, batch_size=flat_batch_size)
+    shared_routing_buffer = state.routing_buffer.reshape(batch_size, n_components, model.routing_buffer_size)[:, 0, :]
+    independent_routing_buffer = state.routing_buffer
+    average_before: list[torch.Tensor] = []
+    average_after: list[torch.Tensor] = []
+
+    for time in range(time_steps):
+        step_parameters = {name: value[:, :, time] for name, value in parameters.items()}
+        flat_parameters = {name: value.reshape(flat_batch_size) for name, value in step_parameters.items()}
+        step_forcing = HBVForcing(
+            precip=forcing.precip[:, time, None].expand(batch_size, n_components).reshape(flat_batch_size),
+            pet=forcing.pet[:, time, None].expand(batch_size, n_components).reshape(flat_batch_size),
+            temp=forcing.temp[:, time, None].expand(batch_size, n_components).reshape(flat_batch_size),
+        )
+        pre_routing = model._pre_routing(state, step_forcing, flat_parameters)
+
+        mean_qgw = pre_routing.qgw.reshape(batch_size, n_components).mean(dim=1)
+        mean_routing_parameters = {name: step_parameters[name].mean(dim=1) for name in model.routing.introduces}
+        shared_streamflow, shared_routing_buffer = model._apply_routing(
+            mean_qgw,
+            shared_routing_buffer,
+            mean_routing_parameters,
+        )
+        component_streamflow, independent_routing_buffer = model._apply_routing(
+            pre_routing.qgw,
+            independent_routing_buffer,
+            flat_parameters,
+        )
+        average_before.append(shared_streamflow)
+        average_after.append(component_streamflow.reshape(batch_size, n_components).mean(dim=1))
+        state = HBVState(
+            zone_sp=pre_routing.snow_pack,
+            zone_lw=pre_routing.liquid_water_in_snow,
+            zone_sm=pre_routing.soil_moisture,
+            upper_zone=pre_routing.upper_zone,
+            lower_zone=pre_routing.lower_zone,
+            routing_buffer=independent_routing_buffer,
+        )
+
+    return torch.stack(average_before, dim=1), torch.stack(average_after, dim=1)
+
+
 def _pre_refactor_hbv_transition(
     model: HBVModel,
     state: HBVState,
@@ -125,6 +175,88 @@ def _pre_refactor_hbv_transition(
         streamflow=qsim,
     )
     return new_state, fluxes
+
+
+def test_hbv_run_components_singleton_is_exact_run_identity_with_warmup() -> None:
+    model = _model()
+    main = _main_forcing()
+    warmup = _warmup_forcing()
+    scalar = _scalar_parameters(model)
+    per_basin = _per_basin_parameters(scalar, batch_size=2)
+    main_time = _constant_time_parameters(scalar, batch_size=2, time_steps=3)
+    warmup_time = _constant_time_parameters(scalar, batch_size=2, time_steps=2)
+    main_time["fc"] = torch.tensor([[90.0, 100.0, 110.0], [105.0, 115.0, 125.0]], dtype=torch.float64)
+    main_time["maxbas"] = torch.tensor([[2.0, 2.5, 3.0], [4.0, 4.5, 5.0]], dtype=torch.float64)
+    warmup_time["fc"] = torch.tensor([[80.0, 85.0], [110.0, 120.0]], dtype=torch.float64)
+    warmup_time["maxbas"] = torch.tensor([[1.5, 2.0], [5.0, 5.5]], dtype=torch.float64)
+
+    for parameter_form in (scalar, per_basin, main_time):
+        expected = model.run(main, parameters=parameter_form)
+        actual = model.run_components(main, parameter_form, n_components=1)
+        assert torch.equal(actual, expected)
+        torch.testing.assert_close(actual, expected, rtol=1e-12, atol=1e-12)
+
+    full_main = {name: value[:, None, :] for name, value in main_time.items()}
+    full_warmup = {name: value[:, None, :] for name, value in warmup_time.items()}
+    expected_warmed = model.run(
+        main,
+        parameters=main_time,
+        warmup=warmup,
+        warmup_parameters=warmup_time,
+    )
+    actual_warmed = model.run_components(
+        main,
+        full_main,
+        n_components=1,
+        warmup=warmup,
+        warmup_parameters=full_warmup,
+    )
+    assert torch.equal(actual_warmed, expected_warmed)
+    torch.testing.assert_close(actual_warmed, expected_warmed, rtol=1e-12, atol=1e-12)
+
+    differentiable_main = {name: value.detach().clone().requires_grad_() for name, value in full_main.items()}
+    differentiable_warmup = {name: value.detach().clone().requires_grad_() for name, value in full_warmup.items()}
+    differentiable_output = model.run_components(
+        main,
+        differentiable_main,
+        n_components=1,
+        warmup=warmup,
+        warmup_parameters=differentiable_warmup,
+    )
+    differentiable_output.sum().backward()
+    assert all(value.grad is None for value in differentiable_warmup.values())
+    fc_gradient = differentiable_main["fc"].grad
+    assert fc_gradient is not None
+    assert torch.isfinite(fc_gradient).all()
+    assert torch.count_nonzero(fc_gradient) > 0
+
+
+def test_hbv_run_components_averages_qgw_before_one_shared_routing_step() -> None:
+    model = _model()
+    forcing = HBVForcing(
+        precip=torch.tensor([[8.0, 0.0, 12.0, 3.0, 0.0, 6.0, 1.0, 9.0]], dtype=torch.float64),
+        pet=torch.tensor([[0.4, 0.6, 0.5, 0.8, 0.7, 0.3, 0.5, 0.6]], dtype=torch.float64),
+        temp=torch.tensor([[-1.0, 2.0, 4.0, 1.0, 3.0, -0.5, 2.5, 5.0]], dtype=torch.float64),
+    )
+    batch_size = 1
+    n_components = 2
+    time_steps = forcing.precip.shape[1]
+    component_fraction = torch.tensor([[[0.3], [0.7]]], dtype=torch.float64)
+    parameters = {
+        name: (low + component_fraction * (high - low)).expand(batch_size, n_components, time_steps).clone()
+        for name, (low, high) in model.parameter_bounds.items()
+    }
+    assert all(not torch.equal(value[:, 0, :], value[:, 1, :]) for value in parameters.values())
+    assert not torch.equal(parameters["maxbas"][:, 0, :], parameters["maxbas"][:, 1, :])
+
+    actual = model.run_components(forcing, parameters, n_components=n_components)
+    average_before, average_after = _component_routing_oracles(model, forcing, parameters)
+
+    assert actual.shape == (batch_size, time_steps)
+    assert actual.dtype == forcing.precip.dtype
+    assert actual.device == forcing.precip.device
+    torch.testing.assert_close(actual, average_before, rtol=1e-12, atol=1e-12)
+    assert not torch.allclose(actual, average_after, rtol=1e-12, atol=1e-12)
 
 
 def test_hbv_transition_internal_stages_match_pre_refactor_transition() -> None:
