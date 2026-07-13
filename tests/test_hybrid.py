@@ -366,3 +366,64 @@ def test_neural_parameter_forecast_model_returns_point_forecast() -> None:
     assert forecast.sample_ids is batch.metadata.sample_ids
     assert forecast.input_end_indices is batch.metadata.input_end_indices
     assert forecast.target_fill_mask is batch.metadata.target_fill_mask
+
+
+def test_neural_parameter_forecast_model_trains_on_synthetic_batch() -> None:
+    torch.manual_seed(1729)
+    device = torch.device("cpu")
+    dtype = torch.float64
+    dynamic_inputs = ("precip", "pet", "temp")
+    static_inputs = ("area",)
+    batch = make_synthetic_batch(
+        batch_size=4,
+        input_length=12,
+        output_length=6,
+        scalar_dynamic_features=len(dynamic_inputs),
+        scalar_static_features=len(static_inputs),
+        include_gridded_dynamic=False,
+        include_gridded_static=False,
+        dtype=dtype,
+        device=device,
+        seed=1729,
+    )
+    hbv = _model().to(dtype=dtype, device=device)
+    network = _TimeVaryingParameterNetwork(
+        input_width=len(dynamic_inputs) + len(static_inputs),
+        parameter_width=len(hbv.parameter_bounds),
+    ).to(dtype=dtype, device=device)
+    model = NeuralParameterForecastModel(
+        hbv,
+        network,
+        dynamic_inputs=dynamic_inputs,
+        static_inputs=static_inputs,
+        physics_forcing={"precip": "precip", "pet": "pet", "temp": "temp"},
+        network_dynamic_inputs=dynamic_inputs,
+        network_static_inputs=static_inputs,
+        forcing_factory=HBVForcing,
+        output_specification=Point(),
+    )
+    optimizer = torch.optim.Adam(network.parameters(), lr=0.02)
+    losses: list[float] = []
+
+    for _ in range(40):
+        optimizer.zero_grad(set_to_none=True)
+        forecast = model(batch)
+        assert forecast.prediction.dtype == batch.target.dtype == dtype
+        assert forecast.prediction.device == batch.target.device == device
+        loss = torch.mean((forecast.prediction - batch.target) ** 2)
+        loss.backward()
+
+        nonzero_weight_gradient = False
+        for name, parameter in network.named_parameters():
+            if name.endswith("weight"):
+                assert parameter.grad is not None
+                assert torch.isfinite(parameter.grad).all()
+                nonzero_weight_gradient |= bool(torch.count_nonzero(parameter.grad))
+        assert nonzero_weight_gradient
+
+        optimizer.step()
+        losses.append(loss.detach().item())
+
+    early_loss = sum(losses[:5]) / 5
+    late_loss = sum(losses[-5:]) / 5
+    assert late_loss < early_loss
