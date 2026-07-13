@@ -23,7 +23,6 @@ jobs:
         uses: astral-sh/setup-uv@v6
       - name: Build docs (strict)
         env:
-          JAX_ENABLE_X64: "1"
           NO_MKDOCS_2_WARNING: "true"
         run: uv run --group docs mkdocs build --strict
       - name: Upload Pages artifact

@@ -1,5 +1,5 @@
 site_name: hydrologeez
-site_description: Differentiable conceptual hydrological models in JAX.
+site_description: Differentiable conceptual hydrological models in PyTorch.
 site_url: https://cooperbigfoot.github.io/hydrologeez/
 repo_url: https://github.com/CooperBigFoot/hydrologeez
 docs_dir: docs

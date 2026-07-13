@@ -33,11 +33,8 @@ non-mutating local gates:
 uv run ruff format --check
 uv run ruff check
 uv run ty check
-JAX_ENABLE_X64=1 uv run pytest
+uv run pytest
 ```
-
-`JAX_ENABLE_X64=1` remains only in the transitional repository test gate until
-dependency cleanup. It is not a hydrologeez runtime requirement or dtype policy.
 
 If `ty` is not installed yet, use `uv add --dev ty`.
 
@@ -55,11 +52,10 @@ Public examples must execute against real signatures. Forcing examples must show
 `[B, T]` tensors. Build documentation with:
 
 ```bash
-JAX_ENABLE_X64=1 NO_MKDOCS_2_WARNING=true uv run --group docs mkdocs build --strict
+NO_MKDOCS_2_WARNING=true uv run --group docs mkdocs build --strict
 ```
 
-The environment variable is transitional contributor-command context only. The
-`hydrologeez.hcx` package is a development-only conformance adapter: it imports hcx
+The `hydrologeez.hcx` package is a development-only conformance adapter: it imports hcx
 lazily and hydrologeez must publish no `hcx.models` entry point.
 
 ## 4. Versioning and Releases
