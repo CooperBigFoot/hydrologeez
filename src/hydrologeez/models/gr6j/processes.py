@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import torch
+from torch import nn
 
 from hydrologeez.convolution import convolve_delay_line
 
-from .constants import EXP_BRANCH_THRESHOLD, MAX_EXP_ARG, MAX_TANH_ARG, NH, PERC_CONSTANT, D
+from .constants import EXP_BRANCH_THRESHOLD, MAX_EXP_ARG, MAX_TANH_ARG, NH, PERC_CONSTANT, B, C, D
 
 
 def production_store_update(
@@ -121,3 +122,102 @@ def convolve_uh(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Apply one read-after-shift delay-line convolution step."""
     return convolve_delay_line(states, ordinates, input_value)
+
+
+class PhysicalProduction(nn.Module):
+    """Physical GR6J production and percolation processes."""
+
+    def forward(
+        self,
+        precip: torch.Tensor,
+        pet: torch.Tensor,
+        production_store: torch.Tensor,
+        x1: torch.Tensor,
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        s_after_ps, actual_et, net_rainfall_pn, effective_rainfall_pr = production_store_update(
+            precip, pet, production_store, x1
+        )
+        storage_infiltration = net_rainfall_pn - effective_rainfall_pr
+
+        s_after_perc, percolation_amount = percolation(s_after_ps, x1)
+        total_effective_rainfall = effective_rainfall_pr + percolation_amount
+        return (
+            s_after_perc,
+            actual_et,
+            net_rainfall_pn,
+            storage_infiltration,
+            percolation_amount,
+            total_effective_rainfall,
+        )
+
+
+class PhysicalRouting(nn.Module):
+    """Physical GR6J unit-hydrograph routing processes."""
+
+    def forward(
+        self,
+        uh1_state: torch.Tensor,
+        uh2_state: torch.Tensor,
+        total_effective_rainfall: torch.Tensor,
+        x4: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        uh1_ord, uh2_ord = compute_uh_ordinates(x4)
+        q9, uh1 = convolve_uh(uh1_state, uh1_ord, B * total_effective_rainfall)
+        q1, uh2 = convolve_uh(uh2_state, uh2_ord, (1.0 - B) * total_effective_rainfall)
+        return q9, q1, uh1, uh2
+
+
+class PhysicalResponse(nn.Module):
+    """Physical GR6J routing, exponential, and direct response processes."""
+
+    def forward(
+        self,
+        routing_store: torch.Tensor,
+        exponential_store: torch.Tensor,
+        q9: torch.Tensor,
+        q1: torch.Tensor,
+        x2: torch.Tensor,
+        x3: torch.Tensor,
+        x5: torch.Tensor,
+        x6: torch.Tensor,
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        exchange_f = groundwater_exchange(routing_store, x2, x3, x5)
+
+        new_routing_store, qr, actual_exchange_routing = routing_store_update(
+            routing_store, (1.0 - C) * q9, exchange_f, x3
+        )
+        new_exp_store, qrexp = exponential_store_update(exponential_store, C * q9, exchange_f, x6)
+        qd, actual_exchange_direct = direct_branch(q1, exchange_f)
+
+        streamflow = torch.clamp_min(qr + qrexp + qd, 0.0)
+        actual_exchange_total = actual_exchange_routing + actual_exchange_direct + exchange_f
+        return (
+            new_routing_store,
+            qr,
+            actual_exchange_routing,
+            new_exp_store,
+            qrexp,
+            qd,
+            actual_exchange_direct,
+            exchange_f,
+            streamflow,
+            actual_exchange_total,
+        )
