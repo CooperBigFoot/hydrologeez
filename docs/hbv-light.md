@@ -47,7 +47,7 @@ rules; calibration ranges and software search bounds require separate choices.
 | $SCF$ | Snowfall correction factor (SFCF in [2]) | dimensionless, positive |
 | $FC$ | Maximum soil storage | mm, positive |
 | $BETA$ | Soil recharge exponent | dimensionless, positive |
-| $LP$ | Soil fraction above which evaporation is potential | dimensionless, $0<LP\leq1$ |
+| $LP$ | Soil fraction above which evaporation is potential | dimensionless, $0\lt LP\leq1$ |
 | $PERC$ | Maximum upper-to-lower percolation rate | mm day$^{-1}$, nonnegative |
 | $UZL$ | Threshold for fast upper-store outflow | mm, nonnegative |
 | $K_0,K_1,K_2$ | Recession coefficients | day$^{-1}$, nonnegative |
@@ -74,13 +74,13 @@ schedule are defined below.
 
 ### 1. Snow: partition, melt or refreeze, then release liquid
 
-Precipitation becomes snow when $T_n<TT$. Otherwise it is rain, including equality
+Precipitation becomes snow when $T_n\lt TT$. Otherwise it is rain, including equality
 in this convention. Define corrected snowfall $P_n^s$ and rainfall $P_n^r$ in mm:
 
 ```math
-P_n^s=\begin{cases}SCF\,P_n&T_n<TT,\\0&T_n\geq TT,\end{cases}
+P_n^s=\begin{cases}SCF\,P_n&T_n\lt TT,\\0&T_n\geq TT,\end{cases}
 \qquad
-P_n^r=\begin{cases}0&T_n<TT,\\P_n&T_n\geq TT.\end{cases}
+P_n^r=\begin{cases}0&T_n\lt TT,\\P_n&T_n\geq TT.\end{cases}
 ```
 
 The modeled precipitation is $P_n^*=P_n^s+P_n^r$. Snowfall correction adjusts
@@ -169,7 +169,7 @@ post-percolation store, then limit them together:
 d_0=K_0\max(U^b-UZL,0)\Delta t,\qquad d_1=K_1U^b\Delta t,
 ```
 ```math
-\lambda=\begin{cases}1&d_0+d_1=0,\\ \min\{1,U^b/(d_0+d_1)\}&d_0+d_1>0,\end{cases}
+\lambda=\begin{cases}1&d_0+d_1=0,\\ \min\{1,U^b/(d_0+d_1)\}&d_0+d_1\gt 0,\end{cases}
 \qquad q_{0,n}=\lambda d_0,\quad q_{1,n}=\lambda d_1.
 ```
 
@@ -200,7 +200,7 @@ $w_B(s)$ a density in day$^{-1}$:
 
 ```math
 w_B(s)=\begin{cases}
-4s/B^2&0\leq s\leq B/2,\\ 4(B-s)/B^2&B/2<s\leq B,\\ 0&\text{otherwise}.
+4s/B^2&0\leq s\leq B/2,\\ 4(B-s)/B^2&B/2\lt s\leq B,\\ 0&\text{otherwise}.
 \end{cases}
 ```
 
@@ -223,7 +223,7 @@ different weights. The daily weights define discrete routing; exact continuous
 convolution for uniform intraday runoff generation would require a separate
 derivation.
 
-Routing memory tracks water still in transit. For $N>1$, $h_{n,j}$ is water from
+Routing memory tracks water still in transit. For $N\gt 1$, $h_{n,j}$ is water from
 earlier generated runoff scheduled for outlet day $n+j$, in basin mm. Set
 $h_{n,N-1}=0$ as an unsaved boundary value:
 
@@ -240,7 +240,7 @@ but includes water that has already left the basin.
 ## Elevation and vegetation zones
 
 Zones contribute in parallel to shared groundwater stores.
-Let zone $z$ have area $a_z>0$ in km², basin area $a=\sum_z a_z$, and fraction
+Let zone $z$ have area $a_z\gt 0$ in km², basin area $a=\sum_z a_z$, and fraction
 $\alpha_z=a_z/a$, with $\sum_z\alpha_z=1$. Each elevation–vegetation unit has
 its own $S_z,L_z,M_z$ and executes the snow and soil rules above. This is the
 standard arrangement in [1, p. 3317]. The alternatives with only snow zoned or
