@@ -1,0 +1,40 @@
+[project]
+name = "hydrologeez"
+version = "0.1.11"
+description = "Bucket-type and hybrid hydrological models for large-sample hydrology"
+requires-python = ">=3.13"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.2.1",
+    "ruff>=0.12",
+    "ty>=0.0.35",
+    "uv-build>=0.12.1,<0.13",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "N", "I", "UP", "B", "C4", "SIM"]
+ignore = ["E501", "N803", "N806"]
+
+[tool.ty.src]
+include = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = ["--strict-markers", "--strict-config", "-ra"]
