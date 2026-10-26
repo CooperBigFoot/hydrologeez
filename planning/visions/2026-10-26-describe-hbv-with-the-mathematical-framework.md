@@ -42,6 +42,14 @@ Apply the existing framework rather than inventing a second formalism:
 
 The publications give central equations but may not fully specify an executable daily recipe. Investigate update order, finite-water limits, routing weights for noninteger duration, forcing corrections, and initialization. Clearly distinguish source-supported behavior from any necessary illustrative convention. A convention must not silently change published physics or be presented as software-equivalent. If a material ambiguity cannot be resolved, explain it and its consequences explicitly rather than concealing it behind a generic equation.
 
+## Rendering and prose revision
+
+Revise `docs/hbv-light.md`, delivered in [PR #95](https://github.com/CooperBigFoot/hydrologeez/pull/95), to correct GitHub math rendering and tighten the prose. This follow-up completes #93 once delivered and verified.
+
+Use fenced `math` blocks for display equations in the current `docs/` Markdown files. GitHub's Markdown API reproduces loss of LaTeX backslashes inside the existing `$$` blocks, including row separators in `cases`; fenced `math` blocks preserve them. Keep `cases` row separators off line endings to avoid an extra backslash in the rendered payload. Check the rendered math payloads against the source and inspect the GitHub display where available. Local lint and calculation checks alone do not establish rendering correctness.
+
+Keep the HBV explanation precise, concise, and readable for hydrologists. Use short, direct prose. Remove throat clearing, promotional language, contrastive negation, and commentary about the document's purpose or adherence to the framework. Introduce processes, symbols, and units where readers need them. Preserve equations, values, worked examples, daily conventions, and material source uncertainties. Consolidate repeated qualifications into short statements at the relevant choice. Keep software-equivalence limits explicit once. The revision changes presentation only.
+
 ## Evidence of success
 
 A hydrologist can follow one day's water movement and understand what persists into the next day. A developer can identify the component equations, zone connections, complete memory, time conventions, and observations without reconstructing this discussion. Any remaining source ambiguity is visible and precisely bounded, not an implicit implementation choice.

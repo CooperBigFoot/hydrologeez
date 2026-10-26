@@ -19,23 +19,23 @@ Include parameters and their domains, units, initialization, and time convention
 
 For continuous-time components, the usual description is
 
-$$
+```math
 \dot{x}=f(x,u;\theta), \qquad y=h(x,u;\theta).
-$$
+```
 
 For an ordered discrete model, it is
 
-$$
+```math
 x_{n+1}=F(x_n,u_n;\theta), \qquad y_n=H(x_n,u_n;\theta).
-$$
+```
 
 Here $x$ is memory, $u$ inputs, $\theta$ parameters, and $y$ outputs. Expand these functions into the actual equations, branches, and intermediate quantities. A generic symbol $F$ is not a model specification. Retain a routing convolution, history law, or implicit equation when that is the clearer description; do not force every component into a finite-dimensional ODE.
 
 For example, a threshold reservoir has memory $S$, inflow $u$, and discharge $q$:
 
-$$
+```math
 q=k\max(S-C,0), \qquad \dot S=u-q.
-$$
+```
 
 The threshold is part of the output law. It does not require a different framework. General nonlinear laws fit the same description, but their domains and solution properties still need checking.
 
@@ -50,9 +50,9 @@ Start from the chosen published model and exact variant. Record unresolved diffe
 
 For example, continuous discharge rate $q(t)$ gives interval amount
 
-$$
+```math
 Q_n=\int_{t_n}^{t_{n+1}}q(t)\,dt.
-$$
+```
 
 This is not generally the endpoint rate multiplied by the interval duration.
 
