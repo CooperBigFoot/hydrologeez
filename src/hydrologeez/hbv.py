@@ -42,7 +42,7 @@ def _day(
         s += freeze - melt
         liquid += melt - freeze
         soil_input = max(liquid - cwh * s, 0.0)
-        liquid -= soil_input
+        liquid = min(liquid, cwh * s)
         initial_recharge = soil_input * (moisture / fc) ** beta
         moisture += soil_input - initial_recharge
         overflow = max(moisture - fc, 0.0)

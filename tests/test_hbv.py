@@ -191,3 +191,16 @@ def test_limited_outflows_leave_restartable_nonnegative_memory() -> None:
     result = simulate(forcing, params, initial)
     assert np.all(result.final.groundwater >= 0)
     simulate(forcing, params, result.final)
+
+
+def test_retained_liquid_remains_restartable_at_capacity() -> None:
+    from hydrologeez.hbv import Forcing, Memory, Parameters, simulate
+
+    forcing = Forcing(np.array([[[2.0, 0.0, 0.0]]]), np.ones(1), np.array([0, 1]))
+    params = Parameters(
+        np.array([0]), np.array([[0.0, 0.0, 0.0, 0.1, 1.0, 100.0, 1.0, 1.0]]), np.zeros((1, 5)), np.ones(1)
+    )
+    initial = Memory(np.array([[1.0, 0.0, 0.0]]), np.zeros((1, 2)), np.zeros(0))
+    result = simulate(forcing, params, initial)
+    assert result.final.zone[0, 1] <= 0.1
+    simulate(forcing, params, result.final)
