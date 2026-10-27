@@ -44,7 +44,9 @@ valid so vectorized calculations do not divide by zero. Routing similarly pads t
 four integrated daily bins with zeros, never rounds fractional MAXBAS.
 
 Forcing layout is basin × day × zone × (P,T,PET), float64 on CPU. Candidates refer
-to basin forcing by index; expanded alternative materializes candidate copies. Rain
+to forcing/area rows by `forcing_index`; `basin_index` always retains physical basin
+identity for candidate and fixed-value associations. The expanded alternative
+materializes candidate copies and changes only the execution lookup index. Rain
 is gamma(shape=.7, scale=6) with 45% occurrence. Temperature is an annual sinusoid
 (amplitude 8°C), Gaussian daily noise (mean 1, sd 3°C), minus zone index. PET is
 1.5 plus the same sinusoid, identical across zones by explicit assumption. These

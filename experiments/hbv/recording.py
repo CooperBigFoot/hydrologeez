@@ -47,7 +47,7 @@ def record(data: Inputs, directory: Path, chunk_days: int = 16) -> dict[str, flo
                 "candidate": np.repeat(data.candidate, width * z),
                 "state_day": np.tile(np.repeat(days, z), n),
                 "zone_id": np.tile(np.arange(z), n * width),
-                "area_fraction": np.repeat(data.area[data.basin_index, None, :], width, axis=1).ravel(),
+                "area_fraction": np.repeat(data.area[data.forcing_index, None, :], width, axis=1).ravel(),
             }
             for j, name in enumerate(["S", "L", "M"]):
                 zone_columns[name] = result.zone_history[:, first:, :, j].ravel()

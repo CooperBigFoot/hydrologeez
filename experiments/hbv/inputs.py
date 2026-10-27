@@ -16,6 +16,7 @@ class Inputs:
     response: Array
     routing: Array
     basin_index: NDArray[np.int64]
+    forcing_index: NDArray[np.int64]
     candidate: NDArray[np.int64]
     zone: Array
     basin: Array
@@ -73,14 +74,16 @@ def synthetic(basins: int, candidates: int, days: int, seed: int = 20261027) -> 
     zone[:, :, 2] = 0.4 * parameters[:, :, 5]
     basin = np.zeros((n, 5))
     basin[:, :2] = [3.0, 10.0]
-    return Inputs(forcing, area, parameters, response, routing, index, candidate, zone, basin, sharing, fixed)
+    return Inputs(
+        forcing, area, parameters, response, routing, index, index.copy(), candidate, zone, basin, sharing, fixed
+    )
 
 
 def expanded_forcing(data: Inputs) -> Inputs:
     """Materialize candidate copies to measure reuse versus contiguous simulation access."""
     return replace(
         data,
-        forcing=data.forcing[data.basin_index],
-        area=data.area[data.basin_index],
-        basin_index=np.arange(len(data.basin_index)),
+        forcing=data.forcing[data.forcing_index],
+        area=data.area[data.forcing_index],
+        forcing_index=np.arange(len(data.basin_index)),
     )

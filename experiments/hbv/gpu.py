@@ -23,7 +23,7 @@ class DeviceInputs:
     parameters: mx.array
     response: mx.array
     routing: mx.array
-    basin_index: mx.array
+    forcing_index: mx.array
     zone: mx.array
     basin: mx.array
 
@@ -64,7 +64,7 @@ def prepare(
     parameters: NDArray[np.float64],
     response: NDArray[np.float64],
     routing: NDArray[np.float64],
-    basin_index: NDArray[np.int64],
+    forcing_index: NDArray[np.int64],
     zone: NDArray[np.float64],
     basin: NDArray[np.float64],
 ) -> DeviceInputs:
@@ -73,7 +73,7 @@ def prepare(
     mx.set_default_device(mx.gpu)
     arrays = [mx.array(a, dtype=mx.float32) for a in (forcing, area, parameters, response, routing)]
     arrays += [
-        mx.array(basin_index, dtype=mx.int32),
+        mx.array(forcing_index, dtype=mx.int32),
         mx.array(zone, dtype=mx.float32),
         mx.array(basin, dtype=mx.float32),
     ]
@@ -147,10 +147,10 @@ def simulate(
     stop = data.forcing.shape[1] if stop is None else stop
     zone, basin = (data.zone, data.basin) if initial is None else initial
     zh, bh, zf, bf, predictions = [zone], [basin], [], [], []
-    area = data.area[data.basin_index]
+    area = data.area[data.forcing_index]
     for t in range(start, stop):
         zone, basin, local, shared = day(
-            data.forcing[:, t][data.basin_index], area, data.parameters, data.response, data.routing, zone, basin
+            data.forcing[:, t][data.forcing_index], area, data.parameters, data.response, data.routing, zone, basin
         )
         predictions.append(shared[:, 0])
         if history:
@@ -189,7 +189,7 @@ def benchmark(data: Inputs, *, history: bool = False, repeats: int = 3) -> dict[
 
     start = perf_counter()
     device = prepare(
-        data.forcing, data.area, data.parameters, data.response, data.routing, data.basin_index, data.zone, data.basin
+        data.forcing, data.area, data.parameters, data.response, data.routing, data.forcing_index, data.zone, data.basin
     )
     preparation = perf_counter() - start
     start = perf_counter()

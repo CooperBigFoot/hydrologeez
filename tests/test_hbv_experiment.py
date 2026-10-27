@@ -137,3 +137,20 @@ def test_sharing_fixed_values_and_water_balance() -> None:
     changed = simulate(data)
     assert not np.allclose(changed.prediction[6:9], original[6:9])
     assert_allclose(changed.prediction[:6], original[:6])
+
+
+def test_expanded_disk_preserves_basin_identity(tmp_path: Path) -> None:
+    import pyarrow.parquet as pq
+
+    from experiments.hbv.inputs import expanded_forcing, synthetic
+    from experiments.hbv.recording import record
+
+    data = synthetic(2, 3, 2)
+    record(expanded_forcing(data), tmp_path, chunk_days=1)
+    table = pq.read_table(tmp_path / "basin.parquet")
+    initial = table.filter(table["state_day"].to_numpy() == 0)
+    assert initial["basin_id"].to_pylist() == [0, 0, 0, 1, 1, 1]
+    assert initial["candidate"].to_pylist() == [0, 1, 2, 0, 1, 2]
+    with np.load(tmp_path / "inputs.npz") as saved:
+        assert_allclose(saved["basin_index"], data.basin_index)
+        assert_allclose(saved["fixed"][saved["basin_index"]], data.fixed[data.basin_index])

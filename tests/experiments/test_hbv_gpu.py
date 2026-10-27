@@ -91,7 +91,7 @@ def test_seeded_float32_fidelity() -> None:
         inputs.parameters,
         inputs.response,
         inputs.routing,
-        inputs.basin_index,
+        inputs.forcing_index,
         inputs.zone,
         inputs.basin,
     )

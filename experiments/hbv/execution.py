@@ -82,7 +82,7 @@ def simulate(
         data.parameters,
         data.response,
         data.routing,
-        data.basin_index,
+        data.forcing_index,
         zone,
         basin,
         start,
