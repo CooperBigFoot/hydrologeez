@@ -1,0 +1,105 @@
+{
+  "backend": "MLX Metal GPU",
+  "cpu_parallel_threads": 8,
+  "precision": "float32 vs CPU float64",
+  "mlx_device": {
+    "device_name": "Apple M4 Max",
+    "max_recommended_working_set_size": 51539607552,
+    "memory_size": 68719476736,
+    "architecture": "applegpu_g16s",
+    "max_buffer_length": 38654705664,
+    "resource_limit": 499000
+  },
+  "history": true,
+  "shape": {
+    "basins": 1000,
+    "simulations": 4000,
+    "days": 90,
+    "padded_zones": 4
+  },
+  "prepare_convert_transfer_sync_seconds": 0.0011873749317601323,
+  "first_gpu_evaluation_seconds": 0.05587412498425692,
+  "first_cpu_evaluation_seconds": 0.14984966698102653,
+  "gpu_repeated_seconds": [
+    0.02963666699361056,
+    0.04099991696421057,
+    0.040319958003237844,
+    0.03712233400437981,
+    0.039072874933481216
+  ],
+  "cpu_serial_repeated_seconds": [
+    0.0600817910162732,
+    0.059031000011600554,
+    0.05746445897966623,
+    0.05834054108709097,
+    0.057876290986314416
+  ],
+  "cpu_parallel_repeated_seconds": [
+    0.010286167031154037,
+    0.009182041976600885,
+    0.009245416964404285,
+    0.008990292088128626,
+    0.009100790950469673
+  ],
+  "first_cpu_parallel_evaluation_seconds": 1.7037174999713898,
+  "gpu_simulation_days_per_second": 9213552.896040395,
+  "host_output_materialization_seconds": 0.006539457943290472,
+  "metal_peak_allocated_bytes": 167427336,
+  "metal_prepared_baseline_bytes": 5307648,
+  "metal_incremental_peak_bytes": 162119688,
+  "errors": {
+    "prediction": {
+      "max_absolute_mm": 6.171884981753806e-06,
+      "rmse_mm": 1.2267743644531113e-07,
+      "max_tolerance_ratio_atol_0.0002_rtol_0.00002": 0.02350681295697768,
+      "max_relative_above_1mm": 5.030403110617421e-06
+    },
+    "zone": {
+      "max_absolute_mm": 9.2679911574578e-05,
+      "rmse_mm": 6.34329498751196e-06,
+      "max_tolerance_ratio_atol_0.0002_rtol_0.00002": 0.040158361945437766,
+      "max_relative_above_1mm": 9.094258317404246e-07
+    },
+    "basin": {
+      "max_absolute_mm": 2.8891481861137436e-05,
+      "rmse_mm": 1.560147389854624e-06,
+      "max_tolerance_ratio_atol_0.0002_rtol_0.00002": 0.06502523241247261,
+      "max_relative_above_1mm": 2.699412522333521e-06
+    },
+    "zone_history": {
+      "max_absolute_mm": 9.2679911574578e-05,
+      "rmse_mm": 5.743653048653261e-06,
+      "max_tolerance_ratio_atol_0.0002_rtol_0.00002": 0.07902217740123575,
+      "max_relative_above_1mm": 1.6025963097021645e-05
+    },
+    "basin_history": {
+      "max_absolute_mm": 3.5130537959560115e-05,
+      "rmse_mm": 1.161135792267086e-06,
+      "max_tolerance_ratio_atol_0.0002_rtol_0.00002": 0.06502523241247261,
+      "max_relative_above_1mm": 5.432493880075384e-06
+    },
+    "zone_flux": {
+      "max_absolute_mm": 2.4889121636562095e-05,
+      "rmse_mm": 2.0028070698046267e-07,
+      "max_tolerance_ratio_atol_0.0002_rtol_0.00002": 0.08778481706985225,
+      "max_relative_above_1mm": 1.7831199207840598e-05
+    },
+    "basin_flux": {
+      "max_absolute_mm": 8.036428228663794e-06,
+      "rmse_mm": 1.1023834179471814e-07,
+      "max_tolerance_ratio_atol_0.0002_rtol_0.00002": 0.02990916752317263,
+      "max_relative_above_1mm": 6.454480323769829e-06
+    }
+  },
+  "notes": [
+    "Per-day graph evaluation and final synchronization are included.",
+    "Metal float64 unsupported; threshold-near float32 rounding can change branches.",
+    "Peak is Metal allocator only, not whole-process RSS; incremental excludes prepared inputs.",
+    "Previous GPU outputs released before repeated evaluation; host outputs materialized after timing.",
+    "Tolerance ratio <=1 means abs(error)<=2e-4mm + 2e-5*abs(reference).",
+    "Histories include initial memory, end-of-day memory, and all recorded fluxes.",
+    "No disk writes, process startup, or synthetic generation timed here.",
+    "Compiled elementwise graph; no custom fused Metal time loop attempted."
+  ],
+  "synthetic_preparation_seconds": 0.03436599997803569
+}

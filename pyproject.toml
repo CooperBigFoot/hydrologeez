@@ -19,6 +19,12 @@ dev = [
     "ty>=0.0.35",
     "uv-build>=0.12.1,<0.13",
 ]
+experiments = [
+    "mlx>=0.29 ; platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "numba>=0.68.1",
+    "numpy>=2.5.4",
+    "pyarrow>=26.0.0",
+]
 
 [tool.ruff]
 line-length = 120
@@ -29,10 +35,10 @@ select = ["E", "F", "W", "N", "I", "UP", "B", "C4", "SIM"]
 ignore = ["E501", "N803", "N806"]
 
 [tool.ty.src]
-include = ["src"]
+include = ["src", "experiments"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]

@@ -1,0 +1,35 @@
+{
+  "settings": {
+    "basins": 1000,
+    "candidates": 8,
+    "days": 365,
+    "backend": "serial",
+    "history": false,
+    "disk": null,
+    "output": "experiments/hbv/evidence/serial.json"
+  },
+  "platform": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "threads": 8,
+  "preparation_seconds": 0.08812962507363409,
+  "expansion_seconds": 3.330642357468605e-07,
+  "startup_seconds": 0.04629641608335078,
+  "evaluation_seconds": [
+    0.39730154094286263,
+    0.392043708008714,
+    0.3943444580072537
+  ],
+  "simulation_days_per_second": 7404693.893140216,
+  "max_absolute_errors": {
+    "prediction": 0.0,
+    "zone": 0.0,
+    "basin": 0.0,
+    "zone_history": 0.0,
+    "basin_history": 0.0,
+    "zone_flux": 0.0,
+    "basin_flux": 0.0
+  },
+  "peak_rss_bytes": 295731200,
+  "forcing_bytes": 35040000,
+  "disk_seconds": null
+}

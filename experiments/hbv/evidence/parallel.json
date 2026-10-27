@@ -1,0 +1,35 @@
+{
+  "settings": {
+    "basins": 1000,
+    "candidates": 8,
+    "days": 365,
+    "backend": "parallel",
+    "history": false,
+    "disk": null,
+    "output": "experiments/hbv/evidence/parallel.json"
+  },
+  "platform": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "threads": 8,
+  "preparation_seconds": 0.08782870904542506,
+  "expansion_seconds": 3.7497375160455704e-07,
+  "startup_seconds": 1.7130598329240456,
+  "evaluation_seconds": [
+    0.052920290967449546,
+    0.0526198340812698,
+    0.051843916065990925
+  ],
+  "simulation_days_per_second": 55492383.26160712,
+  "max_absolute_errors": {
+    "prediction": 0.0,
+    "zone": 0.0,
+    "basin": 0.0,
+    "zone_history": 0.0,
+    "basin_history": 0.0,
+    "zone_flux": 0.0,
+    "basin_flux": 0.0
+  },
+  "peak_rss_bytes": 414941184,
+  "forcing_bytes": 35040000,
+  "disk_seconds": null
+}
