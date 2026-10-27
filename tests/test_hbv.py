@@ -4,7 +4,7 @@ from numpy.testing import assert_allclose
 
 
 def test_worked_day() -> None:
-    from hydrologeez.hbv import Forcing, Memory, Parameters, simulate
+    from hydrologeez.hbv_light import Forcing, Memory, Parameters, simulate
 
     forcing = Forcing(np.array([[[6.0, 2.0, 2.0]]]), np.ones(1), np.array([0, 1]))
     parameters = Parameters(
@@ -27,7 +27,7 @@ def test_worked_day() -> None:
 
 
 def test_fractional_routing_restart_and_associations() -> None:
-    from hydrologeez.hbv import Forcing, Memory, Parameters, simulate
+    from hydrologeez.hbv_light import Forcing, Memory, Parameters, simulate
 
     values = np.zeros((3, 3, 3))
     values[0, :, 0] = [8.0, 2.0, 10.0]
@@ -61,7 +61,7 @@ def test_fractional_routing_restart_and_associations() -> None:
 
 
 def test_invalid_inputs_are_rejected() -> None:
-    from hydrologeez.hbv import Forcing, Memory, Parameters, simulate
+    from hydrologeez.hbv_light import Forcing, Memory, Parameters, simulate
 
     forcing = Forcing(np.zeros((1, 1, 3)), np.ones(1), np.array([0, 1]))
     params = Parameters(
@@ -106,7 +106,7 @@ def test_snow_soil_boundaries(
     expected_state: list[float],
     expected_flux: list[float],
 ) -> None:
-    from hydrologeez.hbv import Forcing, Memory, Parameters, simulate
+    from hydrologeez.hbv_light import Forcing, Memory, Parameters, simulate
 
     forcing = Forcing(np.array([[[rain, temperature, pet]]]), np.ones(1), np.array([0, 1]))
     params = Parameters(
@@ -127,7 +127,7 @@ def test_snow_soil_boundaries(
     ],
 )
 def test_groundwater_allocation(upper: float, lower: float, response: list[float], expected: list[float]) -> None:
-    from hydrologeez.hbv import Forcing, Memory, Parameters, simulate
+    from hydrologeez.hbv_light import Forcing, Memory, Parameters, simulate
 
     forcing = Forcing(np.zeros((1, 1, 3)), np.ones(1), np.array([0, 1]))
     params = Parameters(
@@ -139,7 +139,7 @@ def test_groundwater_allocation(upper: float, lower: float, response: list[float
 
 
 def test_shared_parameters_separate_memory_and_water_in_transit() -> None:
-    from hydrologeez.hbv import Forcing, Memory, Parameters, simulate
+    from hydrologeez.hbv_light import Forcing, Memory, Parameters, simulate
 
     rng = np.random.default_rng(12)
     values = np.empty((60, 7, 3))
@@ -178,7 +178,7 @@ def test_shared_parameters_separate_memory_and_water_in_transit() -> None:
 
 
 def test_limited_outflows_leave_restartable_nonnegative_memory() -> None:
-    from hydrologeez.hbv import Forcing, Memory, Parameters, simulate
+    from hydrologeez.hbv_light import Forcing, Memory, Parameters, simulate
 
     forcing = Forcing(np.zeros((1, 1, 3)), np.ones(1), np.array([0, 1]))
     params = Parameters(
@@ -194,7 +194,7 @@ def test_limited_outflows_leave_restartable_nonnegative_memory() -> None:
 
 
 def test_retained_liquid_remains_restartable_at_capacity() -> None:
-    from hydrologeez.hbv import Forcing, Memory, Parameters, simulate
+    from hydrologeez.hbv_light import Forcing, Memory, Parameters, simulate
 
     forcing = Forcing(np.array([[[2.0, 0.0, 0.0]]]), np.ones(1), np.array([0, 1]))
     params = Parameters(
@@ -207,7 +207,7 @@ def test_retained_liquid_remains_restartable_at_capacity() -> None:
 
 
 def test_overflow_soil_remains_restartable_at_capacity() -> None:
-    from hydrologeez.hbv import Forcing, Memory, Parameters, simulate
+    from hydrologeez.hbv_light import Forcing, Memory, Parameters, simulate
 
     forcing = Forcing(np.array([[[2.0, 0.0, 0.0]]]), np.ones(1), np.array([0, 1]))
     params = Parameters(
