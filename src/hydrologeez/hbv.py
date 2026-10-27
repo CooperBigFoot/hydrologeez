@@ -12,13 +12,12 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
+from .routines.groundwater import groundwater
+from .routines.routing import route, weights
+from .routines.snow import snow
+from .routines.soil import soil
+
 Array = NDArray[np.float64]
-
-
-def _weights(duration: float) -> Array:
-    edges = np.minimum(np.arange(int(np.ceil(duration)) + 1), duration)
-    cdf = np.where(edges <= duration / 2, 2 * (edges / duration) ** 2, 1 - 2 * ((duration - edges) / duration) ** 2)
-    return np.diff(cdf)
 
 
 @njit(cache=True)
@@ -32,48 +31,14 @@ def _day(
         p, t, e = forcing[z]
         tt, cfmax, cfr, cwh, scf, fc, beta, lp = parameters[z]
         s, liquid, moisture = zone[z]
-        corrected = p * scf if t < tt else p
-        if t < tt:
-            s += corrected
-        else:
-            liquid += p
-        melt = min(s, cfmax * max(t - tt, 0.0))
-        freeze = min(liquid, cfr * cfmax * max(tt - t, 0.0))
-        s += freeze - melt
-        liquid += melt - freeze
-        soil_input = max(liquid - cwh * s, 0.0)
-        liquid = min(liquid, cwh * s)
-        initial_recharge = soil_input * (moisture / fc) ** beta
-        moisture += soil_input - initial_recharge
-        overflow = max(moisture - fc, 0.0)
-        moisture -= overflow
-        r = initial_recharge + overflow
-        evaporation = min(moisture, e * min(moisture / (lp * fc), 1.0))
-        moisture -= evaporation
+        s, liquid, soil_input, corrected, melt, freeze = snow(p, t, s, liquid, tt, cfmax, cfr, cwh, scf)
+        moisture, r, evaporation, initial_recharge, overflow = soil(soil_input, e, moisture, fc, beta, lp)
         zone[z] = s, liquid, moisture
         flux[z] = soil_input, r, evaporation, corrected, melt, freeze, initial_recharge, overflow
         recharge += area[z] * r
     perc, uzl, k0, k1, k2 = response
-    upper = basin[0] + recharge
-    d = min(perc, upper)
-    upper -= d
-    lower = basin[1] + d
-    q0 = k0 * max(upper - uzl, 0.0)
-    q1 = k1 * upper
-    scale = min(1.0, upper / (q0 + q1)) if q0 + q1 > 0.0 else 1.0
-    q0 *= scale
-    q1 *= scale
-    q2 = min(lower, k2 * lower)
-    generated = q0 + q1 + q2
-    outlet = routing[0] * generated
-    if len(routing) > 1:
-        outlet += basin[2]
-    for j in range(len(routing) - 1):
-        carried = basin[j + 3] if j + 2 < len(routing) else 0.0
-        basin[j + 2] = carried + routing[j + 1] * generated
-    # Proportional limiting can leave a negative roundoff residual at exhaustion.
-    basin[0] = max(upper - q0 - q1, 0.0)
-    basin[1] = lower - q2
+    basin[0], basin[1], generated, d, q0, q1, q2 = groundwater(recharge, basin[0], basin[1], perc, uzl, k0, k1, k2)
+    outlet = route(generated, routing, basin[2:])
     return flux, np.array([outlet, generated, d, q0, q1, q2])
 
 
@@ -304,7 +269,7 @@ def simulate(
     counts = np.ceil(parameters.maxbas).astype(np.int64)
     routing_offsets = np.concatenate(([0], np.cumsum(counts - 1)))
     weight_offsets = np.concatenate(([0], np.cumsum(counts)))
-    weights = np.concatenate([_weights(float(b)) for b in parameters.maxbas])
+    routing_weights = np.concatenate([weights(float(b)) for b in parameters.maxbas])
     final = Memory(initial.zone.copy(), initial.groundwater.copy(), initial.routing.copy())
     q, zh, gh, rh, zf, bf = _simulate(
         forcing.values,
@@ -315,7 +280,7 @@ def simulate(
         routing_offsets,
         parameters.zone,
         parameters.groundwater,
-        weights,
+        routing_weights,
         weight_offsets,
         final.zone,
         final.groundwater,
