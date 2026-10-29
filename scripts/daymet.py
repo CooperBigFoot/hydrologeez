@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 import boto3
@@ -14,7 +15,7 @@ import numpy as np
 import requests
 from dotenv import load_dotenv
 
-from scripts.daymet_acquire import EarthdataSession, download, inventory
+from scripts.daymet_acquire import EarthdataSession, download_annual, inventory
 from scripts.daymet_archive import Archive, checksum
 from scripts.daymet_mask import BOUNDARY_URL, STATEFP, conus_mask
 from scripts.daymet_prepare import prepare_month
@@ -53,7 +54,12 @@ def save_receipt(archive: Archive, stage: Path, key: str, record: dict) -> None:
 
 
 def run(
-    snapshot: Path, metadata: list[Path], boundary: Path, stage: Path, archive: Archive, session: requests.Session
+    snapshot: Path,
+    metadata: list[Path],
+    boundary: Path,
+    stage: Path,
+    archive: Archive,
+    session_factory: Callable[[], requests.Session],
 ) -> None:
     sources = inventory(snapshot)
     stage.mkdir(parents=True, exist_ok=True)
@@ -110,11 +116,11 @@ def run(
             < sum(source.size for source in annual if not (stage / source.name).exists()) + 15_000_000_000
         ):
             raise ValueError("Insufficient stage disk for annual sources plus monthly prepared output")
+        download_annual(annual, stage, session_factory)
         paths = {}
         objects = []
         for source in annual:
             path = stage / source.name
-            download(session, source, path)
             objects.append(archive.put(path, f"raw/Daymet_Daily_V4R1/{source.name}"))
             paths[source.variable] = path
         mask = conus_mask(paths["prcp"], boundary)
@@ -151,10 +157,15 @@ def main() -> None:
     parser.add_argument("--stage", type=Path, required=True)
     args = parser.parse_args()
     load_dotenv()
-    session = EarthdataSession()
-    session.auth = (os.environ["EARTHDATA_USERNAME"], os.environ["EARTHDATA_PASSWORD"])
+    credentials = (os.environ["EARTHDATA_USERNAME"], os.environ["EARTHDATA_PASSWORD"])
+
+    def session_factory() -> requests.Session:
+        session = EarthdataSession()
+        session.auth = credentials
+        return session
+
     client = boto3.client("s3", endpoint_url="https://fsn1.your-objectstorage.com", region_name="fsn1")
-    run(args.inventory, args.provider_metadata, args.boundary, args.stage, Archive(client), session)
+    run(args.inventory, args.provider_metadata, args.boundary, args.stage, Archive(client), session_factory)
 
 
 if __name__ == "__main__":

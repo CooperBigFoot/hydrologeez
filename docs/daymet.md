@@ -85,6 +85,12 @@ must agree across all three inputs or preparation stops.
 
 ## Bounded storage and verification
 
+Download one annual source trio with at most three independent Earthdata
+sessions, one per variable. All downloads join and pass provider checksums before
+serial archive uploads and preparation begin. On failure pending work is cancelled
+and running transfers finish or fail before the error returns; no completion is
+claimed. This does not resume partial byte ranges.
+
 Stage one annual source trio (~30GB, largest observed file14.07GB) and one
 prepared month. The inspected crop gives a monthly uncompressed upper bound
 4.45GB for P/T/PET plus coordinates. Preparation uses 10×300×300 tiles, tens of

@@ -163,20 +163,36 @@ def test_end_to_end_restart_after_uploaded_month(tmp_path: Path, monkeypatch: py
         archive = Archive(client)
         for source in sources:
             server.get(source.url, body=paths[source.variable].read_bytes())
+        from scripts import daymet_acquire
+
+        original_download = daymet_acquire.download
+
+        def failed_download(session: requests.Session, source: Source, target: Path) -> None:
+            if source.variable == "tmin":
+                raise OSError("source transfer failed")
+            original_download(session, source, target)
+
+        monkeypatch.setattr(daymet_acquire, "download", failed_download)
+        with pytest.raises(OSError, match="source transfer failed"):
+            daymet.run(snapshot, [snapshot], boundary, stage, archive, requests.Session)
+        keys = [item["Key"] for item in client.list_objects_v2(Bucket=archive.bucket)["Contents"]]
+        assert not any(key.endswith("complete.json") or key.startswith("raw/") for key in keys)
+        assert months == []
+        monkeypatch.setattr(daymet_acquire, "download", original_download)
         with pytest.raises(RuntimeError, match="interrupted"):
-            daymet.run(snapshot, [snapshot], boundary, stage, archive, requests.Session())
+            daymet.run(snapshot, [snapshot], boundary, stage, archive, requests.Session)
         assert all((stage / source.name).exists() for source in sources)
         keys = [item["Key"] for item in client.list_objects_v2(Bucket=archive.bucket)["Contents"]]
         assert not any(key.endswith("complete.json") for key in keys)
         monkeypatch.setattr(daymet, "prepare_month", original)
-        daymet.run(snapshot, [snapshot], boundary, stage, archive, requests.Session())
+        daymet.run(snapshot, [snapshot], boundary, stage, archive, requests.Session)
         assert len(server.calls) == 3
         assert not any((stage / source.name).exists() for source in sources)
         keys = [item["Key"] for item in client.list_objects_v2(Bucket=archive.bucket)["Contents"]]
         completion = next(key for key in keys if key.endswith("/complete.json") and "/2024/" not in key)
         record = json.loads(client.get_object(Bucket=archive.bucket, Key=completion)["Body"].read())
         assert len(record["objects"]) == 16
-        daymet.run(snapshot, [snapshot], boundary, stage, archive, requests.Session())
+        daymet.run(snapshot, [snapshot], boundary, stage, archive, requests.Session)
         assert len(server.calls) == 3
 
 
@@ -351,7 +367,55 @@ def test_dependency_changes_isolate_and_archive_processing(tmp_path: Path, monke
         for change in (None, lock, config):
             if change is not None:
                 change.write_text(change.read_text() + "\n# changed")
-            daymet.run(snapshot, [snapshot], boundary, tmp_path / "stage", archive, requests.Session())
+            daymet.run(snapshot, [snapshot], boundary, tmp_path / "stage", archive, requests.Session)
         keys = [item["Key"] for item in client.list_objects_v2(Bucket=archive.bucket)["Contents"]]
         for name in ("uv.lock", "pyproject.toml"):
             assert len([key for key in keys if key.endswith("/provenance/" + name)]) == 3
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_annual_downloads_overlap_with_private_sessions_and_join_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail: bool
+) -> None:
+    from threading import Barrier, Lock
+
+    import requests
+
+    from scripts import daymet_acquire
+    from scripts.daymet_acquire import Source, download_annual
+
+    barrier = Barrier(3, timeout=5)
+    lock = Lock()
+    sessions: list[requests.Session] = []
+    active = 0
+    peak = 0
+    finished = []
+
+    def transfer(session: requests.Session, source: Source, target: Path) -> None:
+        nonlocal active, peak
+        with lock:
+            sessions.append(session)
+            active += 1
+            peak = max(peak, active)
+        try:
+            assert not session.cookies
+            session.cookies.set("variable", source.variable)
+            barrier.wait()
+            if fail and source.variable == "tmin":
+                raise OSError("disk failure")
+            target.write_bytes(source.variable.encode())
+        finally:
+            with lock:
+                active -= 1
+                finished.append(source.variable)
+
+    monkeypatch.setattr(daymet_acquire, "download", transfer)
+    sources = [Source(name, 2024, f"https://example.org/{name}.nc", 1, "unused") for name in ("prcp", "tmin", "tmax")]
+    if fail:
+        with pytest.raises(OSError, match="disk failure"):
+            download_annual(sources, tmp_path, requests.Session)
+    else:
+        download_annual(sources, tmp_path, requests.Session)
+    assert peak == 3 and active == 0
+    assert len({id(session) for session in sessions}) == 3
+    assert sorted(finished) == ["prcp", "tmax", "tmin"]
