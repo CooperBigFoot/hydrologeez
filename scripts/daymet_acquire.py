@@ -18,8 +18,12 @@ class EarthdataSession(requests.Session):
     """Credentials only on NASA source and login hosts, never CDN redirects."""
 
     def rebuild_auth(self, prepared_request: requests.PreparedRequest, response: requests.Response) -> None:
-        host = urlparse(prepared_request.url or "").hostname
-        if host not in {"urs.earthdata.nasa.gov", "data.ornldaac.earthdata.nasa.gov"}:
+        target = urlparse(prepared_request.url or "")
+        if (
+            target.scheme != "https"
+            or target.port not in (None, 443)
+            or target.hostname not in {"urs.earthdata.nasa.gov", "data.ornldaac.earthdata.nasa.gov"}
+        ):
             prepared_request.headers.pop("Authorization", None)
         elif self.auth is not None:
             prepared_request.prepare_auth(self.auth)

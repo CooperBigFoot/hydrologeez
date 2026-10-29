@@ -272,3 +272,35 @@ def test_earthdata_does_not_send_credentials_to_cdn() -> None:
         session.get("https://data.ornldaac.earthdata.nasa.gov/data")
         assert "Authorization" in server.calls[1].request.headers
         assert "Authorization" not in server.calls[2].request.headers
+
+
+def test_empty_receipt_cannot_complete_delivery() -> None:
+    from scripts.daymet import verified_receipt
+    from scripts.daymet_archive import Archive
+
+    with mock_aws():
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket="hydrologeez-daymet")
+        client.put_object(Bucket="hydrologeez-daymet", Key="complete.json", Body=b'{"objects": []}')
+        with pytest.raises(ValueError, match="coverage"):
+            verified_receipt(Archive(client), "complete.json", {"required.nc": None})
+        client.put_object(
+            Bucket="hydrologeez-daymet",
+            Key="complete.json",
+            Body=b'{"objects": [{"key":"required.nc","bytes":1,"sha256":"bad"}]}',
+        )
+        with pytest.raises(ValueError, match="provider"):
+            verified_receipt(Archive(client), "complete.json", {"required.nc": (2, "expected")})
+
+
+def test_earthdata_rejects_http_downgrade() -> None:
+    import requests
+
+    from scripts.daymet_acquire import EarthdataSession
+
+    session = EarthdataSession()
+    session.auth = ("user", "secret")
+    request = requests.Request("GET", "http://urs.earthdata.nasa.gov/login").prepare()
+    request.headers["Authorization"] = "Basic secret"
+    session.rebuild_auth(request, requests.Response())
+    assert "Authorization" not in request.headers

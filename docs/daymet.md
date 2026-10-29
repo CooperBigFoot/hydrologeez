@@ -96,7 +96,8 @@ would total2.41TB plus repeated coordinates/masks. A winter central-US 10-day
 sample with actual source latitude compressed10.8MB to3.53MB, but it is **not an annual storage forecast**.
 Measure actual representative output before relying on compression savings.
 
-`prepared/<processing-hash>/` binds the inventory, boundary and exact scripts.
+`prepared/<processing-hash>/` binds the inventory, boundary, exact scripts,
+`uv.lock` and `pyproject.toml`; dependency files are archived with provenance.
 It contains `provenance/`, `YEAR/MM.nc`, monthly receipts, annual receipts and a
 final `complete.json`. Original CMR bytes, boundary ZIP, scripts and checksums
 are archived. Output namespaces change with processing inputs/code.
@@ -109,7 +110,8 @@ monthly outputs and the annual receipt. Successful metadata access alone can
 never complete a year. Final receipts enumerate bytes, SHA256 and object keys.
 
 Restart the identical command. Complete years/months are reused only after
-full content readback. Incomplete downloads/calculations restart from scratch
+exact expected object coverage and full content readback; raw receipt hashes
+must also match the provider inventory. Incomplete downloads/calculations restart from scratch
 via `.part` files; no uncertain byte-range append. Interrupted multipart uploads
 may leave uncommitted parts requiring operator cleanup; never delete committed
 objects as a retry strategy. Network failures stop the command; rerunning is the

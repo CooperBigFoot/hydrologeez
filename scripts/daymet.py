@@ -20,7 +20,7 @@ from scripts.daymet_mask import BOUNDARY_URL, STATEFP, conus_mask
 from scripts.daymet_prepare import prepare_month
 
 
-def verified_receipt(archive: Archive, key: str) -> dict | None:
+def verified_receipt(archive: Archive, key: str, expected: dict[str, tuple[int, str] | None]) -> dict | None:
     from botocore.exceptions import ClientError
 
     try:
@@ -33,8 +33,15 @@ def verified_receipt(archive: Archive, key: str) -> dict | None:
         receipt = json.loads(response["Body"].read())
     finally:
         response["Body"].close()
-    for item in receipt["objects"]:
-        if archive.digest(item["key"]) != (item["bytes"], item["sha256"]):
+    objects = receipt.get("objects", [])
+    if len(objects) != len(expected) or {item["key"] for item in objects} != expected.keys():
+        raise ValueError("Receipt coverage does not match expected delivery")
+    for item in objects:
+        declared = (item["bytes"], item["sha256"])
+        provider = expected[item["key"]]
+        if provider is not None and declared != provider:
+            raise ValueError("Receipt integrity does not match provider inventory")
+        if archive.digest(item["key"]) != declared:
             raise ValueError(f"Receipt integrity mismatch: {item['key']}")
     return receipt
 
@@ -55,10 +62,13 @@ def run(
     for path in sorted(Path(__file__).parent.glob("daymet*.py")):
         code.update(path.name.encode())
         code.update(path.read_bytes())
+    repository = Path(__file__).resolve().parent.parent
+    dependencies = [repository / "uv.lock", repository / "pyproject.toml"]
     provenance = {
         "inventory_sha256": checksum(snapshot),
         "boundary_sha256": checksum(boundary),
         "code_sha256": code.hexdigest(),
+        "dependencies": {path.name: checksum(path) for path in dependencies},
         "boundary_url": BOUNDARY_URL,
         "states": STATEFP,
         "mask": "projected native cell-center covers; Census2024 500k; source missing retained",
@@ -70,6 +80,8 @@ def run(
     archive.put(boundary, f"{prefix}/provenance/{boundary.name}")
     for path in metadata:
         archive.put(path, f"{prefix}/provenance/provider/{path.name}")
+    for path in dependencies:
+        archive.put(path, f"{prefix}/provenance/{path.name}")
     for path in sorted(Path(__file__).parent.glob("daymet*.py")):
         archive.put(path, f"{prefix}/provenance/scripts/{path.name}")
     save_receipt(archive, stage, f"{prefix}/provenance/processing.json", provenance)
@@ -77,7 +89,13 @@ def run(
     all_objects = []
     for year in sorted({source.year for source in sources}):
         annual_key = f"{prefix}/{year}/complete.json"
-        complete = verified_receipt(archive, annual_key)
+        annual = [source for source in sources if source.year == year]
+        expected: dict[str, tuple[int, str] | None] = {
+            f"raw/Daymet_Daily_V4R1/{source.name}": (source.size, source.sha256) for source in annual
+        }
+        expected[f"{prefix}/{year}/conus-mask.npy"] = None
+        expected.update({f"{prefix}/{year}/{month:02d}.nc": None for month in range(1, 13)})
+        complete = verified_receipt(archive, annual_key, expected)
         if complete is not None:
             all_objects.extend(complete["objects"])
             for source in sources:
@@ -87,7 +105,6 @@ def run(
                 (stage / f"daymet_{year}_{month:02d}.nc").unlink(missing_ok=True)
             print(f"{year}: verified existing annual delivery", flush=True)
             continue
-        annual = [source for source in sources if source.year == year]
         if (
             shutil.disk_usage(stage).free
             < sum(source.size for source in annual if not (stage / source.name).exists()) + 15_000_000_000
@@ -106,7 +123,7 @@ def run(
         objects.append(archive.put(mask_path, f"{prefix}/{year}/conus-mask.npy"))
         for month in range(1, 13):
             key = f"{prefix}/{year}/{month:02d}"
-            receipt = verified_receipt(archive, f"{key}.json")
+            receipt = verified_receipt(archive, f"{key}.json", {f"{key}.nc": None})
             if receipt is None:
                 output = stage / f"daymet_{year}_{month:02d}.nc"
                 prepare_month(paths, year, month, mask, output)
