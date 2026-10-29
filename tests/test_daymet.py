@@ -419,3 +419,185 @@ def test_annual_downloads_overlap_with_private_sessions_and_join_on_failure(
     assert peak == 3 and active == 0
     assert len({id(session) for session in sessions}) == 3
     assert sorted(finished) == ["prcp", "tmax", "tmin"]
+
+
+def test_resume_rejects_unrecognized_provenance(tmp_path: Path) -> None:
+    import json
+
+    from scripts.daymet import resume_processing
+    from scripts.daymet_archive import Archive
+
+    with mock_aws():
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket="hydrologeez-daymet")
+        client.put_object(
+            Bucket="hydrologeez-daymet",
+            Key="prepared/" + "a" * 64 + "/provenance/processing.json",
+            Body=json.dumps({"code_sha256": "wrong"}),
+        )
+        with pytest.raises(ValueError, match="provenance"):
+            resume_processing(Archive(client), "a" * 64, {}, tmp_path)
+
+
+def test_resume_authenticates_original_science_and_inputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import hashlib
+    import json
+
+    from scripts import daymet
+    from scripts.daymet_archive import Archive
+
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    names = (
+        "daymet.py",
+        "daymet_acquire.py",
+        "daymet_archive.py",
+        "daymet_inventory.py",
+        "daymet_mask.py",
+        "daymet_prepare.py",
+    )
+    digest = hashlib.sha256()
+    for name in names:
+        (scripts / name).write_bytes(name.encode())
+        digest.update(name.encode())
+        digest.update(name.encode())
+    monkeypatch.setattr(daymet, "RESUMABLE_CODE_SHA256", digest.hexdigest())
+    original = {
+        "code_sha256": digest.hexdigest(),
+        "dependencies": {"uv.lock": hashlib.sha256(b"lock").hexdigest()},
+        "inventory_sha256": "input",
+    }
+    identity = hashlib.sha256(json.dumps(original, sort_keys=True).encode()).hexdigest()
+    current = dict(original, code_sha256="new acquisition")
+    with mock_aws():
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket="hydrologeez-daymet")
+        prefix = f"prepared/{identity}/provenance"
+        for key, body in [("processing.json", json.dumps(original).encode()), ("uv.lock", b"lock")] + [
+            (f"scripts/{n}", n.encode()) for n in names
+        ]:
+            client.put_object(Bucket="hydrologeez-daymet", Key=f"{prefix}/{key}", Body=body)
+        archive = Archive(client)
+        assert daymet.resume_processing(archive, identity, current, tmp_path) == original
+        with pytest.raises(ValueError, match="inventory"):
+            daymet.resume_processing(archive, identity, dict(current, inventory_sha256="different"), tmp_path)
+        (scripts / "daymet_prepare.py").write_text("changed science")
+        with pytest.raises(ValueError, match="Scientific"):
+            daymet.resume_processing(archive, identity, current, tmp_path)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_prefetch_overlaps_only_next_year_and_joins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail: bool
+) -> None:
+    from threading import Event
+
+    import numpy as np
+    import requests
+
+    from scripts import daymet
+    from scripts.daymet_acquire import Source
+    from scripts.daymet_archive import Archive
+
+    started = Event()
+    release = Event()
+    finished = Event()
+    sources = [
+        Source(name, year, f"https://example.org/{name}_{year}.nc", 1, "unused")
+        for year in (2024, 2025)
+        for name in ("prcp", "tmin", "tmax")
+    ]
+    monkeypatch.setattr(daymet, "inventory", lambda _: sources)
+    monkeypatch.setattr(daymet, "conus_mask", lambda *_: np.ones((1, 1), dtype=bool))
+
+    def download(sources: list[Source], stage: Path, factory: object) -> None:
+        if sources[0].year == 2025 and not finished.is_set():
+            started.set()
+            try:
+                assert release.wait(5)
+                if fail:
+                    raise OSError("prefetch failed")
+            finally:
+                finished.set()
+        for source in sources:
+            (stage / source.name).write_bytes(b"x")
+
+    def prepare(paths: dict[str, Path], year: int, month: int, mask: object, output: Path) -> None:
+        if year == 2024 and month == 1:
+            assert started.wait(5)
+            release.set()
+            assert finished.wait(5)
+        output.write_bytes(b"prepared")
+
+    monkeypatch.setattr(daymet, "download_annual", download)
+    monkeypatch.setattr(daymet, "prepare_month", prepare)
+    snapshot = tmp_path / "inventory.json"
+    snapshot.write_text("{}")
+    boundary = tmp_path / "boundary.zip"
+    boundary.write_bytes(b"boundary")
+    with mock_aws():
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket="hydrologeez-daymet")
+        args = (snapshot, [snapshot], boundary, tmp_path / "stage", Archive(client), requests.Session)
+        if fail:
+            with pytest.raises(OSError, match="prefetch failed"):
+                daymet.run(*args)
+            keys = [item["Key"] for item in client.list_objects_v2(Bucket="hydrologeez-daymet")["Contents"]]
+            assert not any(key.endswith("complete.json") for key in keys)
+        else:
+            daymet.run(*args)
+        assert finished.is_set()
+
+
+def test_resume_preserves_original_namespace_and_appends_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+
+    import requests
+
+    from scripts import daymet
+    from scripts.daymet_archive import Archive
+
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    names = (
+        "daymet.py",
+        "daymet_acquire.py",
+        "daymet_archive.py",
+        "daymet_inventory.py",
+        "daymet_mask.py",
+        "daymet_prepare.py",
+    )
+    digest = hashlib.sha256()
+    for name in names:
+        (scripts / name).write_text(name)
+        digest.update(name.encode())
+        digest.update(name.encode())
+    monkeypatch.setattr(daymet, "__file__", str(scripts / "daymet.py"))
+    monkeypatch.setattr(daymet, "RESUMABLE_CODE_SHA256", digest.hexdigest())
+    monkeypatch.setattr(daymet, "inventory", lambda _: [])
+    for name in ("uv.lock", "pyproject.toml", "inventory.json", "boundary.zip"):
+        (tmp_path / name).write_text(name)
+    with mock_aws():
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket="hydrologeez-daymet")
+        args = (
+            tmp_path / "inventory.json",
+            [tmp_path / "inventory.json"],
+            tmp_path / "boundary.zip",
+            tmp_path / "stage",
+            Archive(client),
+            requests.Session,
+        )
+        daymet.run(*args)
+        keys = [item["Key"] for item in client.list_objects_v2(Bucket="hydrologeez-daymet")["Contents"]]
+        key = next(k for k in keys if k.endswith("/provenance/processing.json"))
+        identity = key.split("/")[1]
+        original = client.get_object(Bucket="hydrologeez-daymet", Key=key)["Body"].read()
+        (scripts / "daymet.py").write_text("acquisition-only revision")
+        daymet.run(*args, resume=identity)
+        assert client.get_object(Bucket="hydrologeez-daymet", Key=key)["Body"].read() == original
+        keys = [item["Key"] for item in client.list_objects_v2(Bucket="hydrologeez-daymet")["Contents"]]
+        assert {k.split("/")[1] for k in keys} == {identity}
+        assert any("/revisions/" in k and k.endswith("/resume.json") for k in keys)

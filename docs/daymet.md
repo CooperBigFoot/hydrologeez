@@ -138,3 +138,43 @@ corruption rejection, leap February, missing-vs-zero and independent numerical
 radiation/PET values. They do not establish full-history delivery. Bulk completion
 requires final bucket receipts/readback, final spatial/date inventory and actual
 elapsed/storage/cost reporting. Request approval before VM deletion.
+
+## One-year-ahead acquisition and preserving existing work
+
+After staging the current year, one background task may download the following
+annual trio while current-year uploads and preparation continue. It uses the
+same three-private-session downloader; it never writes bucket objects. There is
+at most one prefetched year. Free disk must cover its missing source files plus
+the15GB prepared-output reserve; otherwise that year downloads normally when
+needed. A prefetched trio is joined before use. Errors surface at monthly
+boundaries or before advancing; shutdown waits for active downloads and preserves
+staged files. Current-year source files are reclaimed before another following
+year can be prefetched. Downloads are not range-resumed.
+
+The original full-code processing identity remains the default. To preserve an
+existing delivery across this acquisition-only revision, explicitly add:
+
+```sh
+--resume-processing EXISTING_64_CHARACTER_PROCESSING_HASH
+```
+
+This is not an arbitrary prefix override. The command verifies the archived
+processing record hashes to that identity, has the exact expected schema, and
+matches the explicitly reviewed three-download predecessor code digest. It reads
+and authenticates those archived scripts and requires byte-identical preparation
+and mask code, identical inventory/boundary hashes, and identical dependency
+lock/config hashes. Unknown predecessor revisions and mismatches fail closed.
+The migration is only justified by the accompanying review of orchestration;
+same scientific files alone do not prove arbitrary orchestration equivalent.
+
+Original provenance stays unchanged. Current scripts, dependency files and inputs
+are recorded under `provenance/revisions/<revision-identity>/`, with `resume.json`
+linking original and acquisition revision identities. Existing annual and monthly
+receipts keep their original paths and full content verification rules. Repeating
+the same resume command reuses the same immutable revision record.
+
+Restart still reads every completed object in full. For250GB this alone takes
+about42minutes at100MB/s or8minutes at500MB/s; these are arithmetic scenarios,
+not measured rates. No checksum verification is skipped to accelerate restart.
+Keep the existing service running through development/review and perform any
+stop/deploy/restart only through the operator after approval.
