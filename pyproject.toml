@@ -12,11 +12,23 @@ requires = ["uv_build>=0.12.1,<0.13"]
 build-backend = "uv_build"
 
 [dependency-groups]
+acquisition = [
+    "boto3>=1.43.121",
+    "netcdf4>=1.7.5.1.post1",
+    "pyproj>=3.8.0",
+    "pyshp>=3.1.6",
+    "python-dotenv>=1.2.4",
+    "requests>=2.34.2",
+    "shapely>=2.2.0",
+]
 dev = [
+    "boto3-stubs[s3]>=1.43.121",
+    "moto[s3]>=5.2.5",
     "pytest>=8.3",
     "pytest-cov>=6.2.1",
     "ruff>=0.12",
     "ty>=0.0.35",
+    "types-requests>=2.33.0.20261006",
     "uv-build>=0.12.1,<0.13",
 ]
 
@@ -29,10 +41,10 @@ select = ["E", "F", "W", "N", "I", "UP", "B", "C4", "SIM"]
 ignore = ["E501", "N803", "N806"]
 
 [tool.ty.src]
-include = ["src", "tests"]
+include = ["src", "tests", "scripts"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
