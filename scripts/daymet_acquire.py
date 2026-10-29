@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -73,3 +75,21 @@ def download(session: requests.Session, source: Source, target: Path) -> None:
         partial.replace(target)
     if target.stat().st_size != source.size or checksum(target) != source.sha256:
         raise ValueError(f"Local integrity mismatch: {source.name}")
+
+
+def download_annual(sources: list[Source], stage: Path, session_factory: Callable[[], requests.Session]) -> None:
+    """Download the annual trio with private sessions; join before any archive writes."""
+
+    def transfer(source: Source) -> None:
+        with session_factory() as session:
+            download(session, source, stage / source.name)
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = [pool.submit(transfer, source) for source in sources]
+        try:
+            for future in as_completed(futures):
+                future.result()
+        except BaseException:
+            for future in futures:
+                future.cancel()
+            raise
