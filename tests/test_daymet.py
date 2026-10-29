@@ -304,3 +304,54 @@ def test_earthdata_rejects_http_downgrade() -> None:
     request.headers["Authorization"] = "Basic secret"
     session.rebuild_auth(request, requests.Response())
     assert "Authorization" not in request.headers
+
+
+@pytest.mark.parametrize("keys", [[], ["first.nc"], ["first.nc", "wrong.nc"], ["first.nc", "first.nc"]])
+def test_receipt_requires_exact_coverage(keys: list[str]) -> None:
+    import json
+
+    from scripts.daymet import verified_receipt
+    from scripts.daymet_archive import Archive
+
+    with mock_aws():
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket="hydrologeez-daymet")
+        client.put_object(
+            Bucket="hydrologeez-daymet",
+            Key="receipt.json",
+            Body=json.dumps({"objects": [{"key": key, "bytes": 1, "sha256": "bad"} for key in keys]}),
+        )
+        with pytest.raises(ValueError, match="coverage"):
+            verified_receipt(Archive(client), "receipt.json", {"first.nc": None, "second.nc": None})
+
+
+def test_dependency_changes_isolate_and_archive_processing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import requests
+
+    from scripts import daymet
+    from scripts.daymet_archive import Archive
+
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    monkeypatch.setattr(daymet, "__file__", str(scripts / "daymet.py"))
+    # Isolate provenance from the already-covered annual acquisition loop.
+    monkeypatch.setattr(daymet, "inventory", lambda _: [])
+    snapshot = tmp_path / "inventory.json"
+    snapshot.write_text("{}")
+    boundary = tmp_path / "boundary.zip"
+    boundary.write_bytes(b"boundary")
+    lock = tmp_path / "uv.lock"
+    lock.write_text("version=1")
+    config = tmp_path / "pyproject.toml"
+    config.write_text("[project]")
+    with mock_aws():
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket="hydrologeez-daymet")
+        archive = Archive(client)
+        for change in (None, lock, config):
+            if change is not None:
+                change.write_text(change.read_text() + "\n# changed")
+            daymet.run(snapshot, [snapshot], boundary, tmp_path / "stage", archive, requests.Session())
+        keys = [item["Key"] for item in client.list_objects_v2(Bucket=archive.bucket)["Contents"]]
+        for name in ("uv.lock", "pyproject.toml"):
+            assert len([key for key in keys if key.endswith("/provenance/" + name)]) == 3
