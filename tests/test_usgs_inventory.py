@@ -454,7 +454,14 @@ def test_unknown_geography_probes_history_without_claiming_location(tmp_path: Pa
     assert json.loads(path.read_text()) == result
 
 
-def test_history_pairs_are_paced_and_checkpoint_before_cancellation(tmp_path: Path) -> None:
+@pytest.mark.parametrize("api_key,interval", [("", 180.0), ("test-key", 10.0)])
+def test_history_pairs_are_paced_and_checkpoint_before_cancellation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    api_key: str,
+    interval: float,
+) -> None:
+    monkeypatch.setenv("USGS_API_KEY", api_key)
     path = tmp_path / "manifests/inventory.json"
     path.parent.mkdir()
     path.write_text(
@@ -487,7 +494,7 @@ def test_history_pairs_are_paced_and_checkpoint_before_cancellation(tmp_path: Pa
     def probe(*args: Any) -> dict[str, Any]:
         nonlocal clock
         starts.append(clock)
-        clock += 20.0
+        clock += 2.0
         return {"history_status": "source_empty", "start": None, "end": None}
 
     with (
@@ -497,7 +504,52 @@ def test_history_pairs_are_paced_and_checkpoint_before_cancellation(tmp_path: Pa
         pytest.raises(KeyboardInterrupt),
     ):
         build_inventory(tmp_path / "unused.zip", tmp_path, max_history_probes=3)
-    assert starts == [180.0, 360.0]
-    assert waits == [180.0, 160.0, 160.0]
+    assert starts == [interval, 2 * interval]
+    assert waits == [interval, interval - 2, interval - 2]
     saved = json.loads(path.read_text())
     assert [row["history_status"] for row in saved["series"]] == ["source_empty", "source_empty", "unknown"]
+
+
+@pytest.mark.parametrize(
+    "url,authenticated",
+    [
+        ("https://api.waterdata.usgs.gov/ogcapi/v1/collections/daily/items", True),
+        ("https://example.test/items", False),
+        ("https://api.waterdata.usgs.gov.example.test/items", False),
+        ("http://api.waterdata.usgs.gov/items", False),
+    ],
+)
+def test_source_key_is_header_only_and_bound_to_https_usgs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    url: str,
+    authenticated: bool,
+) -> None:
+    monkeypatch.setenv("USGS_API_KEY", "test-secret")
+    response = requests.Response()
+    response.status_code = 200
+    response.url = url
+    response._content = b'{"features": []}'
+    with requests.Session() as session, patch.object(session, "get", return_value=response) as get:
+        _, evidence = source_page(session, url, tmp_path)
+    get.assert_called_once_with(
+        url, timeout=120, headers={"X-Api-Key": "test-secret"} if authenticated else {}, allow_redirects=False
+    )
+    assert "test-secret" not in json.dumps(evidence)
+    assert all(b"test-secret" not in path.read_bytes() for path in tmp_path.iterdir())
+
+
+def test_source_redirect_is_not_followed_with_api_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("USGS_API_KEY", "test-secret")
+    response = requests.Response()
+    response.status_code = 302
+    response.url = "https://api.waterdata.usgs.gov/items"
+    response.headers["Location"] = "https://example.test/items"
+    response._content = b"redirect"
+    with (
+        requests.Session() as session,
+        patch.object(session, "get", return_value=response) as get,
+        pytest.raises(ValueError, match="redirect"),
+    ):
+        source_page(session, response.url, tmp_path)
+    assert get.call_args.kwargs["allow_redirects"] is False

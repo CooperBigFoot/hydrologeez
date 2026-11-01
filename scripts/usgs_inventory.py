@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import zipfile
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
 from time import monotonic, sleep
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import pyproj
 import requests
@@ -25,6 +26,7 @@ from scripts.daymet_mask import BOUNDARY_URL, STATEFP
 METADATA_URL = "https://api.waterdata.usgs.gov/ogcapi/v0/collections/time-series-metadata/items"
 DAILY_URL = "https://api.waterdata.usgs.gov/ogcapi/v1/collections/daily/items"
 HISTORY_PROBE_INTERVAL_SECONDS = 180
+AUTHENTICATED_HISTORY_PROBE_INTERVAL_SECONDS = 10
 
 
 def reconcile_inventory(
@@ -119,7 +121,12 @@ def load_boundary(path: Path) -> tuple[BaseGeometry, str]:
 
 def source_page(session: requests.Session, url: str, directory: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     """Keep exact response bytes and request provenance, including failed answers."""
-    response = session.get(url, timeout=120)
+    target = urlsplit(url)
+    key = os.environ.get("USGS_API_KEY", "")
+    headers = (
+        {"X-Api-Key": key} if key and target.scheme == "https" and target.hostname == "api.waterdata.usgs.gov" else {}
+    )
+    response = session.get(url, timeout=120, headers=headers, allow_redirects=False)
     digest = hashlib.sha256(response.content).hexdigest()
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{digest}.json"
@@ -149,6 +156,8 @@ def source_page(session: requests.Session, url: str, directory: Path) -> tuple[d
     }
     (directory / f"{digest}.provenance.json").write_text(json.dumps(evidence, indent=2))
     response.raise_for_status()
+    if response.is_redirect:
+        raise ValueError("Unexpected source redirect; not followed to protect credentials")
     return response.json(), evidence
 
 
@@ -301,7 +310,12 @@ def build_inventory(
             refine_location_selection(result, session, boundary, workspace / "manifests/discovery/locations", save)
             save(result)
         attempted = 0
-        next_probe = monotonic() + HISTORY_PROBE_INTERVAL_SECONDS
+        interval = (
+            AUTHENTICATED_HISTORY_PROBE_INTERVAL_SECONDS
+            if os.environ.get("USGS_API_KEY")
+            else HISTORY_PROBE_INTERVAL_SECONDS
+        )
+        next_probe = monotonic() + interval
         for row in result["series"]:
             if attempted >= max_history_probes or result.get("location_refinement", {}).get("status") != "complete":
                 break
@@ -311,7 +325,7 @@ def build_inventory(
             }:
                 continue
             sleep(max(0.0, next_probe - monotonic()))
-            next_probe = monotonic() + HISTORY_PROBE_INTERVAL_SECONDS
+            next_probe = monotonic() + interval
             attempted += 1
             try:
                 row.update(history_bounds(session, row, workspace / "manifests/discovery/history"))

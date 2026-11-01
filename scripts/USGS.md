@@ -59,11 +59,18 @@ a bounded number of series per invocation. Explicit successful empty source answ
 remain distinct from failures. Resume retains the same discovery snapshot; use a
 fresh workspace for new discovery. Inspect saved rate-limit/Retry-After headers
 before resuming a failed request. There is no automatic request retry loop here.
-History probe pairs start at least 180 seconds apart, with an initial 180-second
-cooldown on every invocation. Elapsed request/checkpoint time counts toward this
-fixed interval; slow requests do not trigger catch-up bursts. This targets 40
-requests/hour under the default 50 requests/hour/IP allowance, not a guarantee
-when other traffic shares the IP. A failed pair or incomplete location refinement
+Set `USGS_API_KEY` in the process environment to authenticate inventory and RR
+observation requests. Inventory sends it only as `X-Api-Key` to HTTPS
+`api.waterdata.usgs.gov`, never in URLs or saved request provenance; redirects
+are refused to avoid forwarding credentials. The CLI does not load `.env` files.
+History probe pairs start at least 10 seconds apart when the key is nonempty,
+or 180 seconds apart without it. Every invocation starts with the same cooldown.
+Elapsed request/checkpoint time counts; slow requests do not trigger catch-up
+bursts. These fixed intervals target 720 requests/hour against the published
+keyed 1000/hour allowance, or 40 against the unkeyed 50/hour/IP allowance.
+Key presence is not proof of validity or available quota. Other requests sharing
+the key/IP consume that allowance; pacing only covers history pairs, not metadata
+pagination or RR observation acquisition. A failed pair or incomplete location refinement
 stops history probing. The CLI summary exposes `history_failures` and
 `location_refinement_status`; inspect these before continuing. Completed pairs
 checkpoint immediately. Cancellation during a wait preserves them; an interrupted
