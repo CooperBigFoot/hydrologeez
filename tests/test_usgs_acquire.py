@@ -214,3 +214,35 @@ def test_lost_cache_does_not_skip_scopes_after_partial_rebuild(tmp_path: Path, m
     assert completed_scope(tmp_path, second) is None
     acquire_scope(tmp_path, second)
     assert completed_scope(tmp_path, second) is not None
+
+
+def test_completion_retains_multipage_inventory_support(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from scripts.usgs_acquire import completed_scope
+
+    result = rr.from_bundle(FIXTURE.read_bytes())
+    assert isinstance(result, ObservationResult)
+    aggregate = result.outcomes[0]
+    page = aggregate.model_copy(update={"outcome_id": "page-acquisition"})
+    result = result.model_copy(update={"outcomes": (page, aggregate)})
+    monkeypatch.setattr(rr, "fetch", lambda *args, **kwargs: result)
+    scope = Scope("07374000", "2024-01-01", "2024-01-02")
+    record = acquire_scope(tmp_path, scope)
+    # Public cache_status omits supporting_outcomes but exposes validated references.
+    inventory = result.inventories[0].model_copy(
+        update={
+            "evidence": (
+                "Exact publisher pages; finite requested observation scope, not historical availability",
+                "retrieval-outcome:page-acquisition",
+            )
+        }
+    )
+    manifest = SimpleNamespace(outcomes=(aggregate,), inventories=(inventory,))
+    monkeypatch.setattr(rr, "cache_status", lambda _: SimpleNamespace(manifest=manifest))
+    assert completed_scope(tmp_path, scope) == record
+    manifest.outcomes = ()
+    assert completed_scope(tmp_path, scope) is None
+    manifest.outcomes = (aggregate,)
+    manifest.inventories = ()
+    assert completed_scope(tmp_path, scope) is None

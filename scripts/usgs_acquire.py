@@ -185,6 +185,13 @@ def completed_scope(workspace: Path, scope: Scope) -> dict[str, Any] | None:
     os.environ["RIVRETRIEVE_CACHE_DIR"] = str((workspace / "cache").resolve())
     status = rr.cache_status("usgs_nwis")
     cached_outcomes = {outcome.outcome_id for outcome in getattr(status.manifest, "outcomes", ())}
+    # RR validates these references against retained primary/supporting outcomes.
+    cached_outcomes.update(
+        reference.removeprefix("retrieval-outcome:")
+        for inventory in getattr(status.manifest, "inventories", ())
+        for reference in inventory.evidence
+        if reference.startswith("retrieval-outcome:")
+    )
     required_outcomes = {outcome["outcome_id"] for outcome in record["outcomes"]}
     if (
         record["status"] == "complete"
