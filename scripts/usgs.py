@@ -99,6 +99,8 @@ def main() -> None:
                     "series": len(inventory_result["series"]),
                     "stations": len(inventory_result["stations"]),
                     "unresolved": len(inventory_result["unresolved"]),
+                    "history_failures": sum(row["history_status"] == "failed" for row in inventory_result["series"]),
+                    "location_refinement_status": inventory_result.get("location_refinement", {}).get("status"),
                 }
             elif args.command == "plan":
                 inventory_path = workspace / "manifests/inventory.json"

@@ -8,6 +8,7 @@ import zipfile
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
+from time import monotonic, sleep
 from typing import Any
 from urllib.parse import urljoin
 
@@ -23,6 +24,7 @@ from scripts.daymet_mask import BOUNDARY_URL, STATEFP
 
 METADATA_URL = "https://api.waterdata.usgs.gov/ogcapi/v0/collections/time-series-metadata/items"
 DAILY_URL = "https://api.waterdata.usgs.gov/ogcapi/v1/collections/daily/items"
+HISTORY_PROBE_INTERVAL_SECONDS = 180
 
 
 def reconcile_inventory(
@@ -299,6 +301,7 @@ def build_inventory(
             refine_location_selection(result, session, boundary, workspace / "manifests/discovery/locations", save)
             save(result)
         attempted = 0
+        next_probe = monotonic() + HISTORY_PROBE_INTERVAL_SECONDS
         for row in result["series"]:
             if attempted >= max_history_probes or result.get("location_refinement", {}).get("status") != "complete":
                 break
@@ -307,6 +310,8 @@ def build_inventory(
                 "failed",
             }:
                 continue
+            sleep(max(0.0, next_probe - monotonic()))
+            next_probe = monotonic() + HISTORY_PROBE_INTERVAL_SECONDS
             attempted += 1
             try:
                 row.update(history_bounds(session, row, workspace / "manifests/discovery/history"))

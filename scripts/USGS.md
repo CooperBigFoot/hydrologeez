@@ -59,6 +59,16 @@ a bounded number of series per invocation. Explicit successful empty source answ
 remain distinct from failures. Resume retains the same discovery snapshot; use a
 fresh workspace for new discovery. Inspect saved rate-limit/Retry-After headers
 before resuming a failed request. There is no automatic request retry loop here.
+History probe pairs start at least 180 seconds apart, with an initial 180-second
+cooldown on every invocation. Elapsed request/checkpoint time counts toward this
+fixed interval; slow requests do not trigger catch-up bursts. This targets 40
+requests/hour under the default 50 requests/hour/IP allowance, not a guarantee
+when other traffic shares the IP. A failed pair or incomplete location refinement
+stops history probing. The CLI summary exposes `history_failures` and
+`location_refinement_status`; inspect these before continuing. Completed pairs
+checkpoint immediately. Cancellation during a wait preserves them; an interrupted
+pair is probed again on explicit resume. Respect saved `Retry-After` before resume;
+the initial cooldown does not override a longer source-requested wait.
 
 Planning refuses unresolved geography, history or catalogue access. `max-days` is
 an operator-selected sizing limit, not a scientific coverage cutoff; measure small

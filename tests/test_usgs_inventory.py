@@ -1,6 +1,7 @@
 """Selection retains identities and distinguishes unknown geography/history."""
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -11,6 +12,12 @@ from shapely.geometry import Polygon
 
 from scripts.usgs_acquire import plan_scopes
 from scripts.usgs_inventory import apply_locations, build_inventory, history_bounds, reconcile_inventory, source_page
+
+
+@pytest.fixture(autouse=True)
+def no_history_wait() -> Iterator[None]:
+    with patch("scripts.usgs_inventory.sleep"):
+        yield
 
 
 def feature(station: str, series: str, coordinates: list[float] | None) -> dict[str, Any]:
@@ -445,3 +452,52 @@ def test_unknown_geography_probes_history_without_claiming_location(tmp_path: Pa
             plan_scopes(result, max_days=365)
         assert result["series"][0]["history_status"] == ("failed" if answer == "failure" else "daily_bounds")
     assert json.loads(path.read_text()) == result
+
+
+def test_history_pairs_are_paced_and_checkpoint_before_cancellation(tmp_path: Path) -> None:
+    path = tmp_path / "manifests/inventory.json"
+    path.parent.mkdir()
+    path.write_text(
+        json.dumps(
+            {
+                "series": [
+                    {
+                        "station_id": station,
+                        "time_series_id": station,
+                        "selection": "included",
+                        "history_status": "unknown",
+                    }
+                    for station in ["01", "02", "03"]
+                ],
+                "location_refinement": {"status": "complete"},
+            }
+        )
+    )
+    clock = 0.0
+    waits: list[float] = []
+    starts: list[float] = []
+
+    def wait(seconds: float) -> None:
+        nonlocal clock
+        waits.append(seconds)
+        if len(waits) == 3:
+            raise KeyboardInterrupt
+        clock += seconds
+
+    def probe(*args: Any) -> dict[str, Any]:
+        nonlocal clock
+        starts.append(clock)
+        clock += 20.0
+        return {"history_status": "source_empty", "start": None, "end": None}
+
+    with (
+        patch("scripts.usgs_inventory.monotonic", side_effect=lambda: clock),
+        patch("scripts.usgs_inventory.sleep", side_effect=wait),
+        patch("scripts.usgs_inventory.history_bounds", side_effect=probe),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        build_inventory(tmp_path / "unused.zip", tmp_path, max_history_probes=3)
+    assert starts == [180.0, 360.0]
+    assert waits == [180.0, 160.0, 160.0]
+    saved = json.loads(path.read_text())
+    assert [row["history_status"] for row in saved["series"]] == ["source_empty", "source_empty", "unknown"]
