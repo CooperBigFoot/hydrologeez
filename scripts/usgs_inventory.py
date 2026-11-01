@@ -302,7 +302,10 @@ def build_inventory(
         for row in result["series"]:
             if attempted >= max_history_probes or result.get("location_refinement", {}).get("status") != "complete":
                 break
-            if row["selection"] != "included" or row["history_status"] not in {"unknown", "failed"}:
+            if row["selection"] not in {"included", "unknown_coordinates"} or row["history_status"] not in {
+                "unknown",
+                "failed",
+            }:
                 continue
             attempted += 1
             try:
@@ -316,7 +319,7 @@ def build_inventory(
     unresolved = [
         r
         for r in result["series"]
-        if r["selection"] == "unknown_coordinates"
+        if (r["selection"] == "unknown_coordinates" and r["history_status"] != "source_empty")
         or (
             r["selection"] == "included"
             and (
@@ -343,7 +346,15 @@ def build_inventory(
                     "series": [r["time_series_id"] for r in rows],
                 }
             )
-    result.update(stations=scopes, unresolved=unresolved)
+    result.update(
+        stations=scopes,
+        unresolved=unresolved,
+        availability_limitations=[
+            r
+            for r in result["series"]
+            if r["selection"] == "unknown_coordinates" and r["history_status"] == "source_empty"
+        ],
+    )
     save(result)
     return result
 
@@ -384,6 +395,17 @@ def apply_locations(
                 selection="included" if boundary.covers(Point(x, y)) else "outside",
             )
             row["polygon_selection"] = row["selection"]
+        if (
+            row["station_id"] == "11516100"
+            and row["selection"] == "unknown_coordinates"
+            and country == "US"
+            and location["properties"].get("state_code") == "41"
+        ):
+            row["selection"] = "included"
+            row["selection_exception"] = (
+                "User-approved polygon exception: USGS 11516100 classified US/Oregon (41) "
+                "by monitoring-location metadata; coordinates remain unknown."
+            )
 
 
 def refine_location_selection(

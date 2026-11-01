@@ -9,6 +9,7 @@ import pytest
 import requests
 from shapely.geometry import Polygon
 
+from scripts.usgs_acquire import plan_scopes
 from scripts.usgs_inventory import apply_locations, build_inventory, history_bounds, reconcile_inventory, source_page
 
 
@@ -302,3 +303,145 @@ def test_location_failure_stops_history_requests(tmp_path: Path) -> None:
         result = build_inventory(tmp_path / "boundary.zip", tmp_path, refine_locations=True, max_history_probes=10)
     history.assert_not_called()
     assert result["location_refinement"]["status"] == "pending"
+
+
+def test_approved_oregon_exception_preserves_missing_geometry_on_resume(tmp_path: Path) -> None:
+    # USGS monitoring-location classifications; neither station has coordinates.
+    rows = reconcile_inventory(
+        [feature("USGS-11516100", "oregon", None), feature("USGS-11341370", "california", None)],
+        [],
+        [],
+        Polygon([(0, 0), (2, 0), (0, 2)]),
+        "OGC:CRS84",
+    )
+    for row in rows:
+        row.update(catalogue_access="available", history_status="source_empty")
+        if row["station_id"] == "11516100":
+            row.update(history_status="daily_bounds", start="1960-10-01", end="1965-09-30")
+    locations = [
+        {
+            "id": "USGS-" + station,
+            "properties": {"agency_code": "USGS", "country_code": "US", "state_code": state},
+            "geometry": None,
+        }
+        for station, state in [("11516100", "41"), ("11341370", "06")]
+    ]
+    path = tmp_path / "manifests/inventory.json"
+    path.parent.mkdir()
+    path.write_text(
+        json.dumps(
+            {
+                "series": rows,
+                "location_refinement": {
+                    "status": "complete",
+                    "pending": [],
+                    "pages": [{"url": "source", "sha256": "retained"}],
+                    "locations": locations,
+                },
+            }
+        )
+    )
+    with (
+        patch("scripts.usgs_inventory.source_page") as fetch,
+        patch("scripts.usgs_inventory.load_boundary", return_value=(Polygon([(0, 0), (2, 0), (0, 2)]), "OGC:CRS84")),
+    ):
+        result = build_inventory(tmp_path / "boundary.zip", tmp_path, refine_locations=True)
+    fetch.assert_not_called()
+    assert result["stations"] == [
+        {"station": "11516100", "start": "1960-10-01", "end": "1965-09-30", "series": ["oregon"]}
+    ]
+    selected = next(row for row in result["series"] if row["station_id"] == "11516100")
+    assert selected["coordinates"] is None
+    assert selected["coordinate_crs"] is None
+    assert selected["coordinate_source"] is None
+    assert selected["polygon_selection"] == "unknown_coordinates"
+    assert selected["monitoring_location"] == locations[0]
+    assert selected["selection_exception"]
+    assert result["location_refinement"]["pages"] == [{"url": "source", "sha256": "retained"}]
+    assert result["unresolved"] == []
+    assert result["availability_limitations"][0]["station_id"] == "11341370"
+    assert result["availability_limitations"][0]["selection"] == "unknown_coordinates"
+    assert json.loads(path.read_text()) == result
+
+
+@pytest.mark.parametrize(
+    "country,state,selection",
+    [
+        ("US", "06", "unknown_coordinates"),
+        (None, "41", "unknown_coordinates"),
+        ("CA", "41", "unknown_coordinates"),
+        ("US", "41", "outside"),
+    ],
+)
+def test_oregon_exception_requires_authoritative_classification_and_missing_coordinates(
+    country: str | None,
+    state: str,
+    selection: str,
+) -> None:
+    rows = [{"station_id": "11516100", "selection": selection}]
+    locations = [
+        {
+            "id": "USGS-11516100",
+            "properties": {"agency_code": "USGS", "country_code": country, "state_code": state},
+            "geometry": None,
+        }
+    ]
+    apply_locations(rows, locations, Polygon([(0, 0), (2, 0), (0, 2)]), "OGC:CRS84")
+    assert rows[0]["selection"] != "included"
+    assert "selection_exception" not in rows[0]
+
+
+@pytest.mark.parametrize("answer", ["empty", "nonempty", "failure"])
+def test_unknown_geography_probes_history_without_claiming_location(tmp_path: Path, answer: str) -> None:
+    row = {
+        "station_id": "11341370",
+        "time_series_id": "a",
+        "selection": "unknown_coordinates",
+        "history_status": "unknown",
+    }
+    path = tmp_path / "manifests/inventory.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps({"series": [row], "location_refinement": {"status": "complete"}}))
+    documents = [
+        (
+            {
+                "features": []
+                if answer == "empty"
+                else [
+                    {
+                        "properties": {
+                            "monitoring_location_id": "USGS-11341370",
+                            "time_series_id": "a",
+                            "time": day,
+                        }
+                    }
+                ]
+            },
+            {"status": 200, "url": order},
+        )
+        for day, order in [("1960-10-01", "earliest"), ("1965-09-30", "latest")]
+    ]
+    with patch(
+        "scripts.usgs_inventory.source_page",
+        side_effect=requests.HTTPError("429") if answer == "failure" else documents,
+    ) as fetch:
+        result = build_inventory(tmp_path / "unused.zip", tmp_path, max_history_probes=1)
+    assert fetch.call_count == (1 if answer == "failure" else 2)
+    assert result["series"][0]["selection"] == "unknown_coordinates"
+    assert result["stations"] == []
+    if answer == "empty":
+        assert result["unresolved"] == []
+        assert result["availability_limitations"] == result["series"]
+        assert plan_scopes(result, max_days=365) == []
+        assert result["series"][0]["history_status"] == "source_empty"
+        assert result["series"][0]["history_evidence"] == [
+            {"status": 200, "url": "earliest"},
+            {"status": 200, "url": "latest"},
+        ]
+    else:
+        assert result["unresolved"] == result["series"]
+        assert result["availability_limitations"] == []
+        with pytest.raises(ValueError, match="unresolved"):
+            plan_scopes(result, max_days=365)
+        assert result["series"][0]["history_status"] == ("failed" if answer == "failure" else "daily_bounds")
+    assert json.loads(path.read_text()) == result

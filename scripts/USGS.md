@@ -39,8 +39,21 @@ Coordinates retain declared CRS and are transformed for polygon membership.
 monitoring-location pages and missing-coordinate station lookups. Recorded foreign
 countries veto polygon membership; country/polygon conflicts remain visible.
 Missing country is not interpreted as US. Source US sites without coordinates stay
-unresolved. Successful pages checkpoint before continuing, and errors stop the
-invocation for an explicit retry. Refinement is refused after planning.
+unresolved, except station `11516100`: the user-approved polygon-selection exception
+requires USGS monitoring-location country `US` and state `41` (Oregon). Its selection
+is included, while coordinates remain missing and `polygon_selection` remains
+`unknown_coordinates`. The inventory retains `selection_exception`, the authoritative
+monitoring-location feature and response provenance. Re-run `--refine-locations` on
+an unplanned inventory to apply this exception using retained source evidence.
+Station `11341370` has no geographic exception: successful empty earliest/latest
+source probes describe current source availability, not a location or proof that no
+historical records ever existed; its geography remains unknown. Unknown-coordinate
+series are also eligible for paired history probes. Confirmed `source_empty` rows
+stay in `series` and `availability_limitations` with their source evidence, but do
+not block planning or create acquisition scopes. This is a source-access limitation
+of the discovery snapshot, not a geographic exclusion. Unknown, failed or nonempty
+history with unknown geography still blocks planning. Successful pages checkpoint
+before continuing, and errors stop the invocation for an explicit retry. Refinement is refused after planning.
 Unknown bounds are not empty results: paired earliest/latest source queries resolve
 a bounded number of series per invocation. Explicit successful empty source answers
 remain distinct from failures. Resume retains the same discovery snapshot; use a
