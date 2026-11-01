@@ -23,6 +23,8 @@ from scripts.usgs_acquire import (
 )
 from scripts.usgs_archive import USGSArchive, workspace_lock
 from scripts.usgs_inventory import build_inventory
+from scripts.usgs_parts import acquire_part, plan_parts, verify_part, verify_parts
+from scripts.usgs_quota import reconcile, reserve
 
 
 def main() -> None:
@@ -52,17 +54,47 @@ def main() -> None:
         operation.add_argument("workspace", type=Path)
         operation.add_argument("generation")
         operation.add_argument("--profile")
+        if name == "verify-remote":
+            operation.add_argument(
+                "--complete", action="store_true", help="Certify fully acquired multi-root delivery after readback"
+            )
+    for name in ("plan-parts", "acquire-part", "verify-part", "verify-parts"):
+        operation = sub.add_parser(name)
+        operation.add_argument("workspace", type=Path)
+        if name in {"acquire-part", "verify-part"}:
+            operation.add_argument("part")
+    quota = sub.add_parser(
+        "reserve-source-usage", help="Charge recent external/uncertain source requests before part workers"
+    )
+    quota.add_argument("workspace", type=Path)
+    quota.add_argument("label")
+    quota.add_argument("attempts", type=int)
     args = parser.parse_args()
     workspace = args.workspace.resolve()
     started = monotonic()
-    if args.command in {"publish", "restore-files", "verify-remote"}:
+    if args.command == "reserve-source-usage":
+        reservation = reserve(workspace, args.label, args.attempts)
+        reconcile(workspace, reservation, args.attempts)
+        result = {"reservation": reservation}
+    elif args.command in {"acquire-part", "verify-part"}:
+        with workspace_lock(workspace, shared=True):
+            result = (
+                acquire_part(workspace, args.part)
+                if args.command == "acquire-part"
+                else verify_part(workspace, args.part)
+            )
+    elif args.command in {"publish", "restore-files", "verify-remote"}:
         session = boto3.Session(profile_name=args.profile)
         client = session.client("s3", endpoint_url="https://fsn1.your-objectstorage.com", region_name="fsn1")
         archive = USGSArchive(client)
+
+        def validate_delivery(path: Path) -> dict[str, object]:
+            return verify_parts(path) if (path / "manifests/parts-plan.json").exists() else validate_workspace(path)
+
         if args.command == "publish":
-            result = archive.publish(workspace, args.generation, validate=validate_workspace)
+            result = archive.publish(workspace, args.generation, validate=validate_delivery)
         elif args.command == "restore-files":
-            result = archive.restore(args.generation, workspace, validate=validate_workspace)
+            result = archive.restore(args.generation, workspace, validate=validate_delivery)
             result["native_local_cache_usable"] = True
         else:
             credentials = session.get_credentials()
@@ -82,11 +114,23 @@ def main() -> None:
             os.environ["RIVRETRIEVE_S3_REGION"] = "fsn1"
             cache_root = f"s3://{archive.bucket}/{archive.prefix}/cache/{args.generation}"
             with workspace_lock(workspace):
-                result = validate_workspace(workspace, cache_root=cache_root)
+                result = (
+                    verify_parts(workspace, cache_root=cache_root)
+                    if (workspace / "manifests/parts-plan.json").exists()
+                    else validate_workspace(workspace, cache_root=cache_root)
+                )
+                if args.complete:
+                    result = archive.complete_delivery(workspace, args.generation, result)
     else:
         with workspace_lock(workspace):
             os.environ["RIVRETRIEVE_CACHE_DIR"] = str(workspace / "cache")
-            if args.command == "acquire-scope":
+            if args.command == "plan-parts":
+                result = plan_parts(workspace)
+            elif args.command == "verify-parts":
+                result = verify_parts(workspace)
+            elif args.command == "acquire-scope":
+                if (workspace / "manifests/parts-plan.json").exists():
+                    raise ValueError("Original cache frozen by parts plan")
                 result = acquire_scope(workspace, Scope(args.station, args.start, args.end))
             elif args.command == "inventory":
                 inventory_result = build_inventory(
@@ -118,6 +162,8 @@ def main() -> None:
                 atomic_write(path, json.dumps(plan_record, indent=2).encode())
                 result = {"planned_scopes": len(scopes)}
             elif args.command == "acquire-plan":
+                if (workspace / "manifests/parts-plan.json").exists():
+                    raise ValueError("Original cache frozen by parts plan")
                 if args.max_scopes < 1:
                     raise ValueError("max-scopes must be positive")
                 plan_record = json.loads((workspace / "manifests/plan.json").read_text())

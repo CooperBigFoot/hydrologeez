@@ -134,3 +134,76 @@ alone. Approval and qualifiers are independent source facts; neither is screened
 Implementation context: [vision](../planning/visions/2026-10-31-usgs-streamflow-acquisition-on-hetzner.md)
 and [#119](https://github.com/CooperBigFoot/hydrologeez/issues/119). Scripts and pilot
 publication alone do not complete full acquisition.
+
+## Independent cache parts
+
+After validating the original acquisition, freeze its existing scope markers and
+assign all remaining logical station/date coverage without moving original files:
+
+```sh
+uv run --group acquisition python -m scripts.usgs plan-parts WORKSPACE
+uv run --group acquisition python -m scripts.usgs reserve-source-usage WORKSPACE recent-other-requests 300
+uv run --group acquisition python -m scripts.usgs acquire-part WORKSPACE part-00000
+uv run --group acquisition python -m scripts.usgs verify-part WORKSPACE part-00000
+```
+
+The final two commands must run in **separate processes**. Unattended local
+verification must run with external source-network denial (for example a systemd
+unit with `IPAddressDeny=any` after dependencies are installed). Public RR reuse
+can otherwise attempt HTTP before this script rejects fallback. The operator/test
+wrapper may deny HTTP as in the pilot; production code does not patch transport.
+Remote delivery verification needs S3 access, so its operator policy must deny
+USGS source access while allowing the destination. Acquisition saves one
+publisher bundle without decoding a second copy. Verification loads it once,
+checks known source-series outcomes while retaining newly discovered identities,
+then releases payloads before native audit and station readback. A saved acquired
+record is not verified completion. Resume acquired parts by verification, never
+by automatic source refresh. Missing/corrupt bundles or interrupted attempts stop
+for explicit recovery; retain their evidence before any operator recovery.
+An acquired record without `quota-reconciled.json` also stops: reconcile retained
+attempt provenance explicitly before verification or continuing that part.
+
+Each part has its own native root `cache/parts/PART`, publisher bundle under
+`receipts/parts/`, and acquisition/verification records under `manifests/parts/`.
+`parts-plan.json` binds inventory and original plan hashes, unchanged original
+scope-marker hashes, and exact inclusive logical assignments. Common request
+windows and their additional returned dates are not extra assigned coverage.
+Overlapping publisher padding may appear in separate immutable vintages; never
+merge or overwrite those results. Existing single-cache acquisition commands are
+refused once parts are planned.
+
+Sizing caps are 50 stations and 750,000 potential daily source-series rows across
+the shared window, including four padding days. Requests are estimated separately
+per station with a 10,000-row page size. These are benchmark-based operational
+caps, not scientific filters or memory guarantees; gaps overestimate rows and
+new matching series can underestimate them. Extra series/rows are retained, and
+`exceeds_row_estimate` records excess rows. An oversized station is split into
+adjacent logical date windows. No history is truncated.
+
+Use at most two acquisition workers with independent part assignments and memory
+caps; run each verification in a fresh process. Shared workspace read locks permit
+two workers, while publication and plan mutation require exclusive access. Each
+part additionally has one writer. No daemon or automatic retry is installed.
+
+The shared quota ledger reserves three attempts per estimated page against 900
+requests per rolling hour, leaving headroom under the observed keyed 1000/hour
+allowance. **Use an authenticated environment and seed recent external usage**
+with `reserve-source-usage` before starting workers. Ledger exhaustion exits with
+remaining wait; wait outside the lock before explicit continuation. Unreconciled
+reservations remain charged until explicit reconciliation; they never expire while
+requests may still be running. Actual retained call IDs are charged for an hour
+after reconciliation. Seeded external usage is charged for an hour from seeding.
+This is not a hard per-request rate limiter. RR may retry internally;
+failed outcomes stop the worker, including rate-limit failures. RR result provenance
+does not expose response remaining-quota headers, so no remaining count is invented.
+Respect separately recorded source Retry-After and retain uncertain attempt charges.
+
+`verify-parts` audits the original root and every independent part and proves exact
+logical coverage. Existing `publish`, `restore-files`, and `verify-remote` select
+this validator when `parts-plan.json` exists. Publish only while workers are stopped.
+`restore-files` verifies every restored local root; `verify-remote` verifies each
+published S3 root independently. Once delivered readback succeeds, use
+`verify-remote ... --complete` to write immutable `manifests/GENERATION/verified-delivery.json`.
+This final marker binds delivered assignment/evidence bytes and lists independent
+roots; `complete.json` alone still certifies bytes, not national completion. No
+merged-cache claim is made. Preserve the original source vintage and all bundles.

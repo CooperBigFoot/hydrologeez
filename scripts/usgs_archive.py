@@ -15,11 +15,11 @@ from scripts.daymet_archive import Archive, checksum
 
 
 @contextmanager
-def workspace_lock(workspace: Path) -> Generator[None]:
+def workspace_lock(workspace: Path, *, shared: bool = False) -> Generator[None]:
     workspace.mkdir(parents=True, exist_ok=True)
     with (workspace / ".acquisition.lock").open("a") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
         except BlockingIOError as error:
             raise RuntimeError("USGS workspace is busy") from error
         try:
@@ -113,3 +113,45 @@ class USGSArchive(Archive):
             if validate is not None:
                 validate(workspace)
             return manifest
+
+    def complete_delivery(self, workspace: Path, generation: str, verification: dict[str, Any]) -> dict[str, Any]:
+        """Publish final multi-root completion only after delivered-root readback."""
+        self._generation(generation)
+        if not verification.get("planned_scopes_complete"):
+            raise ValueError("Cannot complete a partial acquisition")
+        key = self._key(generation, "manifests/verified-delivery.json")
+        if self.digest(key) is not None:
+            raise ValueError("Verified delivery already exists")
+        plan = workspace / "manifests/parts-plan.json"
+        # Bind final completion to the exact assignment bytes already delivered.
+        if self.digest(self._key(generation, "manifests/parts-plan.json")) != (plan.stat().st_size, checksum(plan)):
+            raise ValueError("Delivered assignment differs from readback workspace")
+        response = self.client.get_object(Bucket=self.bucket, Key=self._key(generation, "manifests/complete.json"))
+        try:
+            delivered = json.loads(response["Body"].read())
+        finally:
+            response["Body"].close()
+        for item in delivered["files"]:
+            if (
+                item["path"].startswith(("receipts/", "manifests/"))
+                and checksum(workspace / item["path"]) != item["sha256"]
+            ):
+                raise ValueError("Readback evidence differs from delivered files")
+        record = {
+            "generation": generation,
+            "parts_plan_sha256": checksum(plan),
+            "verification": verification,
+            "roots": [{"component": "original", "cache": f"s3://{self.bucket}/{self.prefix}/cache/{generation}"}]
+            + [
+                {
+                    "component": part["id"],
+                    "cache": f"s3://{self.bucket}/{self.prefix}/cache/{generation}/parts/{part['id']}",
+                }
+                for part in json.loads(plan.read_text())["parts"]
+            ],
+        }
+        with TemporaryDirectory() as temporary:
+            marker = Path(temporary) / "verified-delivery.json"
+            marker.write_text(json.dumps(record, indent=2))
+            self.put(marker, key)
+        return record

@@ -129,11 +129,49 @@ def test_cli_restore_verifies_native_cache_and_bundles(
     from unittest.mock import patch
 
     from scripts.usgs import main
-    from scripts.usgs_acquire import validate_workspace
 
     monkeypatch.setattr("sys.argv", ["usgs", "restore-files", str(tmp_path), "pilot"])
-    with patch("scripts.usgs.boto3.Session"), patch("scripts.usgs.USGSArchive") as archive:
+    with (
+        patch("scripts.usgs.boto3.Session"),
+        patch("scripts.usgs.USGSArchive") as archive,
+        patch("scripts.usgs.validate_workspace") as validate,
+    ):
         archive.return_value.restore.return_value = {"generation": "pilot"}
         main()
-    archive.return_value.restore.assert_called_once_with("pilot", tmp_path, validate=validate_workspace)
+        archive.return_value.restore.call_args.kwargs["validate"](tmp_path)
+        validate.assert_called_once_with(tmp_path)
     assert '"native_local_cache_usable": true' in capsys.readouterr().out
+
+
+def test_shared_part_workers_exclude_publication(tmp_path: Path) -> None:
+    from scripts.usgs_archive import workspace_lock
+
+    with (
+        workspace_lock(tmp_path, shared=True),
+        workspace_lock(tmp_path, shared=True),
+        pytest.raises(RuntimeError, match="busy"),
+        workspace_lock(tmp_path),
+    ):
+        pass
+
+
+def test_delivery_completion_requires_readback_and_matching_assignment(tmp_path: Path) -> None:
+    import json
+
+    from scripts.usgs_archive import USGSArchive
+
+    for directory in ("cache", "receipts", "manifests"):
+        (tmp_path / directory).mkdir()
+    plan = tmp_path / "manifests/parts-plan.json"
+    plan.write_text(json.dumps({"parts": [{"id": "part-00000"}]}))
+    with mock_aws():
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket="hydrologeez-daymet")
+        archive = USGSArchive(client)
+        archive.publish(tmp_path, "parts")
+        with pytest.raises(ValueError, match="partial"):
+            archive.complete_delivery(tmp_path, "parts", {"planned_scopes_complete": False})
+        record = archive.complete_delivery(tmp_path, "parts", {"planned_scopes_complete": True})
+        assert record["roots"][1]["cache"].endswith("/cache/parts/parts/part-00000")
+        with pytest.raises(ValueError, match="already exists"):
+            archive.complete_delivery(tmp_path, "parts", {"planned_scopes_complete": True})
