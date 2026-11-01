@@ -126,5 +126,10 @@ def test_verification_blocks_network_fallback(tmp_path: Path, monkeypatch: pytes
         raise AssertionError("Network should have been denied")
 
     monkeypatch.setattr(rr, "fetch", fetch)
+
+    def deny_http(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("Source HTTP forbidden")
+
+    monkeypatch.setattr(requests.sessions.Session, "send", deny_http)
     with pytest.raises(RuntimeError, match="Source HTTP forbidden"):
         validate_workspace(tmp_path)

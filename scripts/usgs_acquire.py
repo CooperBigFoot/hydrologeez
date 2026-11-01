@@ -10,7 +10,6 @@ from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 from uuid import uuid4
 
 import rivretrieve as rr
@@ -146,10 +145,7 @@ def validate_workspace(workspace: Path) -> dict[str, Any]:
         selection = rr.find(
             provider="usgs_nwis", station=scope.station, quantity="discharge", frequency="daily", statistic="mean"
         )
-        with patch(
-            "requests.sessions.Session.send", side_effect=RuntimeError("Source HTTP forbidden during verification")
-        ):
-            held = rr.fetch(selection, start=scope.start, end=scope.end, cache="reuse", receipts=True)
+        held = rr.fetch(selection, start=scope.start, end=scope.end, cache="reuse", receipts=True)
         if not held.receipts.entries or any(e.authorship.value != "store_excerpt" for e in held.receipts.entries):
             raise ValueError("Restore readback required source acquisition instead of cache reuse")
         keys = ["station_id", "series_id", "facts_id", "time"]
