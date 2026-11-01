@@ -19,6 +19,7 @@ acquisition = [
     "pyshp>=3.1.6",
     "python-dotenv>=1.2.4",
     "requests>=2.34.2",
+    "rivretrieve",
     "shapely>=2.2.0",
 ]
 dev = [
@@ -50,3 +51,6 @@ python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = ["--strict-markers", "--strict-config", "-ra"]
+
+[tool.uv.sources]
+rivretrieve = { git = "https://github.com/RivRetrieve/RivRetrieve", rev = "cfdf6ddc73b0eedda8794386f951248d367ff2fe" }
