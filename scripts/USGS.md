@@ -81,8 +81,9 @@ from scripts.usgs_acquire import quality_rows
 
 result = rr.from_bundle(Path("receipts/RESULT.rrbundle").read_bytes())
 for properties in quality_rows(result):
-    print(properties["time_series_id"], properties["time"],
-          properties.get("approval_status"), properties.get("qualifier"))
+    print(
+        properties["time_series_id"], properties["time"], properties.get("approval_status"), properties.get("qualifier")
+    )
 ```
 
 These are unchanged publisher properties. Payloads can include padded dates outside

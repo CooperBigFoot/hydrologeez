@@ -173,9 +173,12 @@ def test_cli_plan_binds_inventory_and_refuses_changed_plan(
 
 def test_bundle_only_restore_validation_needs_no_native_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from scripts.usgs_acquire import validate_bundles
+
     result = rr.from_bundle(FIXTURE.read_bytes())
     assert isinstance(result, ObservationResult)
     monkeypatch.setattr(rr, "fetch", lambda *args, **kwargs: result)
     acquire_scope(tmp_path, Scope("07374000", "2024-01-01", "2024-01-02"))
-    monkeypatch.setattr(rr, "audit_cache", lambda _: pytest.fail("Bundle verification must not audit copied native cache"))
+    monkeypatch.setattr(
+        rr, "audit_cache", lambda _: pytest.fail("Bundle verification must not audit copied native cache")
+    )
     assert validate_bundles(tmp_path) == {"scopes": 1, "rows": 2, "planned_scopes_complete": False}
