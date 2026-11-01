@@ -18,7 +18,7 @@ from rivretrieve._internal.observations import ObservationResult
 
 from scripts.daymet_archive import checksum
 
-RR_REVISION = "b361e2bdb2f0faeaa730ff65432db527a65eab2a"
+RR_REVISION = "cfdf6ddc73b0eedda8794386f951248d367ff2fe"
 
 
 @dataclass(frozen=True)

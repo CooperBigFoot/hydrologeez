@@ -99,13 +99,13 @@ GET SHA256, and writes the matching generation marker last. Completed generation
 are immutable. A delivery marker certifies matching bytes, **not national acquisition
 completion**. Inspect inventory unresolved rows and `planned_scopes_complete`.
 
-**Native local cache copies are not portable at the pinned RR revision**: inode and
-device integrity witnesses change on download ([RR #651](https://github.com/RivRetrieve/RivRetrieve/issues/651)).
-`restore-files` verifies downloaded bytes and publisher bundles, not native local
-cache usability. Do not run local `verify` or resume acquisition on that copied cache.
-`verify-remote` instead uses RR's supported public S3 reader to audit the delivered
-native snapshot and compare cached reads with restored result bundles. Keep original
-local working cache for acquisition; remote snapshots are read-only deliveries.
+`restore-files` verifies downloaded bytes, audits the restored native cache and
+compares cached reads with publisher bundles. The pinned RR revision verifies
+copied cache content and renews local filesystem integrity witnesses through its
+public APIs ([RR #651](https://github.com/RivRetrieve/RivRetrieve/issues/651)).
+No manual seal changes are needed. `verify` can check the restored local workspace;
+`verify-remote` checks the published snapshot using RR's public S3 reader. Remote
+snapshots remain read-only deliveries.
 
 Verification rejects publisher fallback receipts, but RR `reuse` can attempt source
 requests for an incomplete cache. Independent offline verification can deny source

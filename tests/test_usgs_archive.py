@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import boto3
+import pytest
 from moto import mock_aws
 
 
@@ -120,3 +121,19 @@ def test_rejects_symlinked_cache_root(tmp_path: Path) -> None:
         client.create_bucket(Bucket="hydrologeez-daymet")
         with pytest.raises(ValueError, match="Symlink"):
             USGSArchive(client).publish(workspace, "pilot")
+
+
+def test_cli_restore_verifies_native_cache_and_bundles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from unittest.mock import patch
+
+    from scripts.usgs import main
+    from scripts.usgs_acquire import validate_workspace
+
+    monkeypatch.setattr("sys.argv", ["usgs", "restore-files", str(tmp_path), "pilot"])
+    with patch("scripts.usgs.boto3.Session"), patch("scripts.usgs.USGSArchive") as archive:
+        archive.return_value.restore.return_value = {"generation": "pilot"}
+        main()
+    archive.return_value.restore.assert_called_once_with("pilot", tmp_path, validate=validate_workspace)
+    assert '"native_local_cache_usable": true' in capsys.readouterr().out

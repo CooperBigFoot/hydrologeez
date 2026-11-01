@@ -18,7 +18,6 @@ from scripts.usgs_acquire import (
     atomic_write,
     completed_scope,
     plan_scopes,
-    validate_bundles,
     validate_workspace,
 )
 from scripts.usgs_archive import USGSArchive, workspace_lock
@@ -62,8 +61,8 @@ def main() -> None:
         if args.command == "publish":
             result = archive.publish(workspace, args.generation, validate=validate_workspace)
         elif args.command == "restore-files":
-            result = archive.restore(args.generation, workspace, validate=validate_bundles)
-            result["native_local_cache_usable"] = False
+            result = archive.restore(args.generation, workspace, validate=validate_workspace)
+            result["native_local_cache_usable"] = True
         else:
             credentials = session.get_credentials()
             if credentials is None:
