@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import rivretrieve as rr
 from rivretrieve._internal.observations import ObservationResult
+from rivretrieve._internal.source_series import RetrievalOutcome
 
 from scripts.usgs_acquire import Scope, acquire_scope, quality_rows
 
@@ -193,7 +194,7 @@ def test_lost_cache_does_not_skip_scopes_after_partial_rebuild(tmp_path: Path, m
 
     result = rr.from_bundle(FIXTURE.read_bytes())
     assert isinstance(result, ObservationResult)
-    cached: list = []
+    cached: list[RetrievalOutcome] = []
     monkeypatch.setattr(rr, "cache_status", lambda _: SimpleNamespace(manifest=SimpleNamespace(outcomes=tuple(cached))))
 
     def fetch(*args: object, **kwargs: object) -> ObservationResult:
