@@ -300,7 +300,7 @@ def build_inventory(
             save(result)
         attempted = 0
         for row in result["series"]:
-            if attempted >= max_history_probes:
+            if attempted >= max_history_probes or result.get("location_refinement", {}).get("status") != "complete":
                 break
             if row["selection"] != "included" or row["history_status"] not in {"unknown", "failed"}:
                 continue
