@@ -37,6 +37,7 @@ def main() -> None:
     inventory.add_argument("workspace", type=Path)
     inventory.add_argument("boundary", type=Path)
     inventory.add_argument("--max-history-probes", type=int, default=0)
+    inventory.add_argument("--refine-locations", action="store_true")
     plan = sub.add_parser("plan", help="Freeze scopes only after geography/history is resolved")
     plan.add_argument("workspace", type=Path)
     plan.add_argument("--max-days", type=int, required=True)
@@ -88,7 +89,12 @@ def main() -> None:
             if args.command == "acquire-scope":
                 result = acquire_scope(workspace, Scope(args.station, args.start, args.end))
             elif args.command == "inventory":
-                inventory_result = build_inventory(args.boundary, workspace, max_history_probes=args.max_history_probes)
+                inventory_result = build_inventory(
+                    args.boundary,
+                    workspace,
+                    max_history_probes=args.max_history_probes,
+                    refine_locations=args.refine_locations,
+                )
                 result = {
                     "series": len(inventory_result["series"]),
                     "stations": len(inventory_result["stations"]),

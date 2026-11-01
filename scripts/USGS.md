@@ -28,13 +28,19 @@ https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_500k.zip.
 The inventory retains its checksum, CRS and the contiguous 48 states plus DC.
 
 ```sh
-uv run --group acquisition python -m scripts.usgs inventory WORKSPACE BOUNDARY.zip --max-history-probes 10
+uv run --group acquisition python -m scripts.usgs inventory WORKSPACE BOUNDARY.zip --refine-locations --max-history-probes 10
 uv run --group acquisition python -m scripts.usgs plan WORKSPACE --max-days 100000
 uv run --group acquisition python -m scripts.usgs acquire-plan WORKSPACE --max-scopes 1
 ```
 
 Inventory unions live USGS Daily/Mean metadata with RR's retained identities.
 Coordinates retain declared CRS and are transformed for polygon membership.
+`--refine-locations` reconciles the frozen inventory with complete Canadian
+monitoring-location pages and missing-coordinate station lookups. Recorded foreign
+countries veto polygon membership; country/polygon conflicts remain visible.
+Missing country is not interpreted as US. Source US sites without coordinates stay
+unresolved. Successful pages checkpoint before continuing, and errors stop the
+invocation for an explicit retry. Refinement is refused after planning.
 Unknown bounds are not empty results: paired earliest/latest source queries resolve
 a bounded number of series per invocation. Explicit successful empty source answers
 remain distinct from failures. Resume retains the same discovery snapshot; use a

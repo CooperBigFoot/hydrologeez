@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import zipfile
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -258,13 +259,21 @@ def discover_inventory(
     return result
 
 
-def build_inventory(boundary: Path, workspace: Path, *, max_history_probes: int = 0) -> dict[str, Any]:
+def build_inventory(
+    boundary: Path,
+    workspace: Path,
+    *,
+    max_history_probes: int = 0,
+    refine_locations: bool = False,
+) -> dict[str, Any]:
     """Build/resume inventory; optionally resolve a bounded number of series pairs.
 
     A zero probe budget performs metadata discovery only. Each history probe uses
     two HTTP requests. Source errors remain unresolved and stop this invocation;
     callers can respect Retry-After before resuming, rather than retrying blindly.
     """
+    if (workspace / "manifests/plan.json").exists() and (refine_locations or max_history_probes):
+        raise ValueError("Cannot refine a planned inventory")
     if max_history_probes < 0:
         raise ValueError("max_history_probes must be nonnegative")
     path = workspace / "manifests/inventory.json"
@@ -285,6 +294,9 @@ def build_inventory(boundary: Path, workspace: Path, *, max_history_probes: int 
             result = discover_inventory(
                 workspace, boundary, {"descriptions": descriptions}, rr.metadata(selection).to_dicts(), session
             )
+            save(result)
+        if refine_locations:
+            refine_location_selection(result, session, boundary, workspace / "manifests/discovery/locations", save)
             save(result)
         attempted = 0
         for row in result["series"]:
@@ -307,7 +319,11 @@ def build_inventory(boundary: Path, workspace: Path, *, max_history_probes: int 
         if r["selection"] == "unknown_coordinates"
         or (
             r["selection"] == "included"
-            and (r["history_status"] in {"unknown", "failed"} or r.get("catalogue_access") == "unavailable")
+            and (
+                r["history_status"] in {"unknown", "failed"}
+                or r.get("catalogue_access") == "unavailable"
+                or result.get("location_refinement", {}).get("status") != "complete"
+            )
         )
     ]
     blocked = {r["station_id"] for r in unresolved}
@@ -330,3 +346,94 @@ def build_inventory(boundary: Path, workspace: Path, *, max_history_probes: int 
     result.update(stations=scopes, unresolved=unresolved)
     save(result)
     return result
+
+
+def apply_locations(
+    rows: list[dict[str, Any]],
+    locations: list[dict[str, Any]],
+    boundary: BaseGeometry,
+    boundary_crs: str,
+) -> None:
+    """Reconcile source country/geometry without replacing unknowns with state names."""
+    indexed = {
+        f["id"].removeprefix("USGS-"): f
+        for f in locations
+        if f["id"].startswith("USGS-") and f["properties"].get("agency_code") == "USGS"
+    }
+    project = pyproj.Transformer.from_crs("OGC:CRS84", boundary_crs, always_xy=True)
+    for row in rows:
+        location = indexed.get(row["station_id"])
+        if location is None:
+            continue
+        row["monitoring_location"] = location
+        row.setdefault("polygon_selection", row["selection"])
+        country = location["properties"].get("country_code")
+        row["country_code"] = country
+        if country and country != "US":
+            row["country_polygon_conflict"] = row["polygon_selection"] == "included"
+            row["selection"] = "outside_country"
+            continue
+        geometry = location.get("geometry")
+        if row["selection"] == "unknown_coordinates" and geometry and geometry["type"] == "Point":
+            coordinates = geometry["coordinates"]
+            x, y = project.transform(*coordinates[:2], errcheck=True)
+            row.update(
+                coordinates=coordinates,
+                coordinate_crs="OGC:CRS84",
+                coordinate_source="monitoring_location",
+                selection="included" if boundary.covers(Point(x, y)) else "outside",
+            )
+            row["polygon_selection"] = row["selection"]
+
+
+def refine_location_selection(
+    result: dict[str, Any],
+    session: requests.Session,
+    boundary: Path,
+    directory: Path,
+    checkpoint: Callable[[dict[str, Any]], None],
+) -> None:
+    """Bounded, checkpointed checks of border countries and unknown geometry."""
+    endpoint = "https://api.waterdata.usgs.gov/ogcapi/v1/collections/monitoring-locations/items"
+    state: dict[str, Any] | None = result.get("location_refinement")
+    if state is None:
+        queries: list[dict[str, str | int]] = [
+            {"f": "json", "country_code": country, "limit": 50000} for country in ("CA",)
+        ]
+        missing = sorted({r["station_id"] for r in result["series"] if r["selection"] == "unknown_coordinates"})
+        for offset in range(0, len(missing), 100):
+            ids = ",".join("'USGS-" + station + "'" for station in missing[offset : offset + 100])
+            queries.append({"f": "json", "filter": f"id IN ({ids})", "filter-lang": "cql2-text", "limit": 100})
+        state = {
+            "pending": [requests.Request("GET", endpoint, params=q).prepare().url for q in queries],
+            "pages": [],
+            "locations": [],
+            "status": "pending",
+            "scope": "All CA source locations and unknown-coordinate inventory stations; absence does not establish US country",
+        }
+        result["location_refinement"] = state
+        checkpoint(result)
+    while state["pending"]:
+        url = state["pending"][0]
+        assert isinstance(url, str)
+        try:
+            document, evidence = source_page(session, url, directory)
+            links = [urljoin(url, link["href"]) for link in document.get("links", []) if link.get("rel") == "next"]
+            visited = {page["url"] for page in state["pages"]}
+            if len(links) > 1 or any(link in visited or link == url for link in links):
+                raise ValueError("Invalid monitoring-location pagination")
+            locations = document["features"]
+        except (requests.RequestException, ValueError, KeyError) as error:
+            state["error"] = str(error)
+            checkpoint(result)
+            break
+        state["pages"].append(evidence)
+        state["locations"].extend(locations)
+        state["pending"] = links + state["pending"][1:]
+        state.pop("error", None)
+        checkpoint(result)
+    geometry, crs = load_boundary(boundary)
+    apply_locations(result["series"], state["locations"], geometry, crs)
+    state["status"] = "complete" if not state["pending"] else "pending"
+    state["updated_at"] = datetime.now(UTC).isoformat()
+    checkpoint(result)

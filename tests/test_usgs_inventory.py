@@ -9,7 +9,7 @@ import pytest
 import requests
 from shapely.geometry import Polygon
 
-from scripts.usgs_inventory import build_inventory, history_bounds, reconcile_inventory, source_page
+from scripts.usgs_inventory import apply_locations, build_inventory, history_bounds, reconcile_inventory, source_page
 
 
 def feature(station: str, series: str, coordinates: list[float] | None) -> dict[str, Any]:
@@ -132,7 +132,7 @@ def test_station_scopes_do_not_hide_unresolved_series(tmp_path: Path) -> None:
     ]
     path = tmp_path / "manifests/inventory.json"
     path.parent.mkdir()
-    path.write_text(json.dumps({"series": rows}))
+    path.write_text(json.dumps({"series": rows, "location_refinement": {"status": "complete"}}))
     result = build_inventory(tmp_path / "not-needed-on-resume.zip", tmp_path)
     assert result["stations"] == [{"station": "02", "start": "1861-01-01", "end": "2026-10-31", "series": ["c"]}]
     assert [r["time_series_id"] for r in result["unresolved"]] == ["b"]
@@ -179,7 +179,104 @@ def test_live_identity_missing_from_catalogue_blocks_plan(tmp_path: Path) -> Non
     rows = reconcile_inventory([live], [], [], Polygon([(0, 0), (2, 0), (0, 2)]), "OGC:CRS84")
     path = tmp_path / "manifests/inventory.json"
     path.parent.mkdir()
-    path.write_text(json.dumps({"series": rows}))
+    path.write_text(json.dumps({"series": rows, "location_refinement": {"status": "complete"}}))
     result = build_inventory(tmp_path / "unused.zip", tmp_path)
     assert result["stations"] == []
     assert result["unresolved"][0]["catalogue_access"] == "unavailable"
+
+
+def test_source_country_excludes_polygon_conflict_and_keeps_us_unknown() -> None:
+    rows = [
+        {"station_id": "01", "selection": "included"},
+        {"station_id": "02", "selection": "unknown_coordinates"},
+        {"station_id": "03", "selection": "unknown_coordinates"},
+    ]
+    locations = [
+        {"id": "USGS-" + station, "properties": {"agency_code": "USGS", "country_code": country}, "geometry": None}
+        for station, country in [("01", "CA"), ("02", "JP"), ("03", "US")]
+    ]
+    apply_locations(rows, locations, Polygon([(0, 0), (2, 0), (0, 2)]), "OGC:CRS84")
+    assert rows[0]["selection"] == "outside_country"
+    assert rows[0]["polygon_selection"] == "included"
+    assert rows[0]["country_polygon_conflict"] is True
+    assert rows[1]["selection"] == "outside_country"
+    assert rows[2]["selection"] == "unknown_coordinates"
+    assert rows[0]["monitoring_location"] == locations[0]
+
+
+def test_location_refinement_refused_after_planning(tmp_path: Path) -> None:
+    path = tmp_path / "manifests/plan.json"
+    path.parent.mkdir()
+    path.write_text("{}")
+    with pytest.raises(ValueError, match="planned"):
+        build_inventory(tmp_path / "unused.zip", tmp_path, refine_locations=True)
+
+
+def test_refinement_preserves_history_and_saves_source_evidence(tmp_path: Path) -> None:
+    row = {
+        "station_id": "01",
+        "time_series_id": "a",
+        "selection": "included",
+        "history_status": "daily_bounds",
+        "start": "1900-01-01",
+        "end": "2000-01-01",
+    }
+    path = tmp_path / "manifests/inventory.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps({"series": [row]}))
+    location = {"id": "USGS-01", "properties": {"agency_code": "USGS", "country_code": "CA"}, "geometry": None}
+    with (
+        patch(
+            "scripts.usgs_inventory.source_page",
+            return_value=({"features": [location]}, {"sha256": "evidence", "url": "source"}),
+        ),
+        patch("scripts.usgs_inventory.load_boundary", return_value=(Polygon([(0, 0), (2, 0), (0, 2)]), "OGC:CRS84")),
+    ):
+        result = build_inventory(tmp_path / "boundary.zip", tmp_path, refine_locations=True)
+    assert result["series"][0]["history_status"] == "daily_bounds"
+    assert result["stations"] == []
+    assert len(result["location_refinement"]["pages"]) == 1
+    assert result["location_refinement"]["status"] == "complete"
+    assert json.loads(path.read_text()) == result
+
+
+def test_location_failure_checkpoints_then_resumes_without_repeating_pages(tmp_path: Path) -> None:
+    path = tmp_path / "manifests/inventory.json"
+    path.parent.mkdir()
+    path.write_text(
+        json.dumps(
+            {
+                "series": [
+                    {
+                        "station_id": "01",
+                        "time_series_id": "a",
+                        "selection": "included",
+                        "history_status": "daily_bounds",
+                        "start": "1900-01-01",
+                        "end": "2000-01-01",
+                    }
+                ]
+            }
+        )
+    )
+    with (
+        patch(
+            "scripts.usgs_inventory.source_page",
+            side_effect=[
+                ({"features": [], "links": [{"rel": "next", "href": "https://example.test/next"}]}, {"url": "first"}),
+                requests.HTTPError("temporary source error"),
+                ({"features": []}, {"url": "https://example.test/next"}),
+            ],
+        ) as fetch,
+        patch("scripts.usgs_inventory.load_boundary", return_value=(Polygon([(0, 0), (2, 0), (0, 2)]), "OGC:CRS84")),
+    ):
+        first = build_inventory(tmp_path / "boundary.zip", tmp_path, refine_locations=True)
+        assert len(first["unresolved"]) == 1
+        assert first["location_refinement"]["status"] == "pending"
+        assert first["stations"] == []
+        second = build_inventory(tmp_path / "boundary.zip", tmp_path, refine_locations=True)
+        assert fetch.call_count == 3
+        assert second["location_refinement"]["status"] == "complete"
+        assert len(second["stations"]) == 1
+        assert "country_code=CA" in fetch.call_args_list[0].args[1]
+        assert fetch.call_args_list[1].args[1] == "https://example.test/next"
