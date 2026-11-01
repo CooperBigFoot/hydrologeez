@@ -246,3 +246,45 @@ def test_completion_retains_multipage_inventory_support(tmp_path: Path, monkeypa
     manifest.outcomes = (aggregate,)
     manifest.inventories = ()
     assert completed_scope(tmp_path, scope) is None
+
+
+def test_plan_reuses_only_initial_completion_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from scripts.daymet_archive import checksum
+    from scripts.usgs import main
+
+    result = rr.from_bundle(FIXTURE.read_bytes())
+    assert isinstance(result, ObservationResult)
+    monkeypatch.setattr(rr, "fetch", lambda *args, **kwargs: result)
+    scopes = [Scope("07374000", day, day) for day in ("2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04")]
+    for scope in (scopes[0], scopes[1], scopes[3]):
+        acquire_scope(tmp_path, scope)
+    inventory = tmp_path / "manifests/inventory.json"
+    inventory.write_text("{}")
+    from dataclasses import asdict
+
+    (tmp_path / "manifests/plan.json").write_text(
+        json.dumps(
+            {
+                "inventory_sha256": checksum(inventory),
+                "scopes": [asdict(scope) for scope in scopes],
+            }
+        )
+    )
+    status = Mock(return_value=SimpleNamespace(manifest=SimpleNamespace(outcomes=result.outcomes)))
+    monkeypatch.setattr(rr, "cache_status", status)
+    acquired: list[Scope] = []
+
+    def acquire(workspace: Path, scope: Scope) -> dict[str, object]:
+        acquired.append(scope)
+        # A mutation invalidates the old snapshot: the later saved marker must not skip.
+        status.return_value = SimpleNamespace(manifest=None)
+        return {}
+
+    monkeypatch.setattr("scripts.usgs.acquire_scope", acquire)
+    monkeypatch.setattr("sys.argv", ["usgs", "acquire-plan", str(tmp_path), "--max-scopes", "2"])
+    main()
+    assert acquired == scopes[2:]
+    assert status.call_count == 2

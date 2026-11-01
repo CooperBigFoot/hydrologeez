@@ -16,6 +16,7 @@ from scripts.usgs_acquire import (
     Scope,
     acquire_scope,
     atomic_write,
+    cached_outcome_ids,
     completed_scope,
     plan_scopes,
     validate_workspace,
@@ -125,10 +126,12 @@ def main() -> None:
                 if checksum(workspace / "manifests/inventory.json") != plan_record["inventory_sha256"]:
                     raise ValueError("Inventory changed after planning")
                 acquired = 0
+                initial_outcomes: set[str] | None = cached_outcome_ids(workspace)
                 for item in plan_record["scopes"]:
                     scope = Scope(**item)
-                    if completed_scope(workspace, scope) is not None:
+                    if completed_scope(workspace, scope, cached_outcomes=initial_outcomes) is not None:
                         continue
+                    initial_outcomes = None
                     acquire_scope(workspace, scope)
                     acquired += 1
                     if acquired >= args.max_scopes:

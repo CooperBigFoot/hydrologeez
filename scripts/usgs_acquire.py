@@ -175,23 +175,30 @@ def plan_scopes(inventory: dict[str, Any], max_days: int) -> list[Scope]:
     ]
 
 
-def completed_scope(workspace: Path, scope: Scope) -> dict[str, Any] | None:
-    """A completion marker needs both its bundle and a committed native cache."""
-    marker = workspace / "manifests/scopes" / f"{scope.key}.json"
-    if not marker.exists():
-        return None
-    record = json.loads(marker.read_text())
-    bundle = workspace / record["bundle"]
+def cached_outcome_ids(workspace: Path) -> set[str]:
+    """Read validated active and inventory-support acquisition identities."""
     os.environ["RIVRETRIEVE_CACHE_DIR"] = str((workspace / "cache").resolve())
     status = rr.cache_status("usgs_nwis")
-    cached_outcomes = {outcome.outcome_id for outcome in getattr(status.manifest, "outcomes", ())}
+    cached = {outcome.outcome_id for outcome in getattr(status.manifest, "outcomes", ())}
     # RR validates these references against retained primary/supporting outcomes.
-    cached_outcomes.update(
+    cached.update(
         reference.removeprefix("retrieval-outcome:")
         for inventory in getattr(status.manifest, "inventories", ())
         for reference in inventory.evidence
         if reference.startswith("retrieval-outcome:")
     )
+    return cached
+
+
+def completed_scope(workspace: Path, scope: Scope, *, cached_outcomes: set[str] | None = None) -> dict[str, Any] | None:
+    """Check bundle and cache; a supplied snapshot is valid only before cache mutation."""
+    marker = workspace / "manifests/scopes" / f"{scope.key}.json"
+    if not marker.exists():
+        return None
+    record = json.loads(marker.read_text())
+    bundle = workspace / record["bundle"]
+    if cached_outcomes is None:
+        cached_outcomes = cached_outcome_ids(workspace)
     required_outcomes = {outcome["outcome_id"] for outcome in record["outcomes"]}
     if (
         record["status"] == "complete"
