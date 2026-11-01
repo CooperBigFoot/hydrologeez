@@ -28,7 +28,9 @@ def test_missing_bundle_reacquires_with_refresh(tmp_path: Path, monkeypatch: pyt
     calls: list[str] = []
     from types import SimpleNamespace
 
-    monkeypatch.setattr(rr, "cache_status", lambda _: SimpleNamespace(committed_path=tmp_path / "cache"))
+    monkeypatch.setattr(
+        rr, "cache_status", lambda _: SimpleNamespace(manifest=SimpleNamespace(outcomes=result.outcomes))
+    )
 
     def fetch(*args: object, **kwargs: object) -> ObservationResult:
         calls.append(str(kwargs["cache"]))
@@ -182,3 +184,32 @@ def test_bundle_only_restore_validation_needs_no_native_cache(tmp_path: Path, mo
         rr, "audit_cache", lambda _: pytest.fail("Bundle verification must not audit copied native cache")
     )
     assert validate_bundles(tmp_path) == {"scopes": 1, "rows": 2, "planned_scopes_complete": False}
+
+
+def test_lost_cache_does_not_skip_scopes_after_partial_rebuild(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from scripts.usgs_acquire import completed_scope
+
+    result = rr.from_bundle(FIXTURE.read_bytes())
+    assert isinstance(result, ObservationResult)
+    cached: list = []
+    monkeypatch.setattr(rr, "cache_status", lambda _: SimpleNamespace(manifest=SimpleNamespace(outcomes=tuple(cached))))
+
+    def fetch(*args: object, **kwargs: object) -> ObservationResult:
+        outcome = result.outcomes[0].model_copy(update={"outcome_id": str(kwargs["start"])})
+        cached.append(outcome)
+        return result.model_copy(update={"outcomes": (outcome,)})
+
+    monkeypatch.setattr(rr, "fetch", fetch)
+    first = Scope("07374000", "2024-01-01", "2024-01-02")
+    second = Scope("07374000", "2024-01-03", "2024-01-04")
+    acquire_scope(tmp_path, first)
+    acquire_scope(tmp_path, second)
+    assert completed_scope(tmp_path, second) is not None
+    cached.clear()
+    assert completed_scope(tmp_path, first) is None
+    acquire_scope(tmp_path, first)
+    assert completed_scope(tmp_path, second) is None
+    acquire_scope(tmp_path, second)
+    assert completed_scope(tmp_path, second) is not None

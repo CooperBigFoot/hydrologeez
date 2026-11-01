@@ -183,11 +183,15 @@ def completed_scope(workspace: Path, scope: Scope) -> dict[str, Any] | None:
     record = json.loads(marker.read_text())
     bundle = workspace / record["bundle"]
     os.environ["RIVRETRIEVE_CACHE_DIR"] = str((workspace / "cache").resolve())
+    status = rr.cache_status("usgs_nwis")
+    cached_outcomes = {outcome.outcome_id for outcome in getattr(status.manifest, "outcomes", ())}
+    required_outcomes = {outcome["outcome_id"] for outcome in record["outcomes"]}
     if (
         record["status"] == "complete"
         and bundle.is_file()
         and checksum(bundle) == record["sha256"]
-        and rr.cache_status("usgs_nwis").committed_path is not None
+        and required_outcomes
+        and required_outcomes <= cached_outcomes
     ):
         return record
     return None
