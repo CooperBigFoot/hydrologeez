@@ -113,6 +113,7 @@ def test_verification_blocks_network_fallback(tmp_path: Path, monkeypatch: pytes
         json.dumps(
             {
                 "status": "complete",
+                "rows": 2,
                 "bundle": "receipts/result.rrbundle",
                 "sha256": checksum(bundle),
                 "scope": {"station": "07374000", "start": "2024-01-01", "end": "2024-01-02"},
@@ -133,3 +134,48 @@ def test_verification_blocks_network_fallback(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setattr(requests.sessions.Session, "send", deny_http)
     with pytest.raises(RuntimeError, match="Source HTTP forbidden"):
         validate_workspace(tmp_path)
+
+
+def test_plan_refuses_unresolved_inventory_and_preserves_station_spans() -> None:
+    from scripts.usgs_acquire import plan_scopes
+
+    inventory = {"stations": [{"station": "07374000", "start": "2024-01-01", "end": "2024-01-03"}], "unresolved": []}
+    assert plan_scopes(inventory, 2) == [
+        Scope("07374000", "2024-01-01", "2024-01-02"),
+        Scope("07374000", "2024-01-03", "2024-01-03"),
+    ]
+    inventory["unresolved"] = [{"station": "unknown"}]
+    with pytest.raises(ValueError, match="unresolved"):
+        plan_scopes(inventory, 2)
+
+
+def test_cli_plan_binds_inventory_and_refuses_changed_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from scripts.usgs import main
+
+    inventory = tmp_path / "manifests/inventory.json"
+    inventory.parent.mkdir()
+    inventory.write_text(
+        json.dumps(
+            {"stations": [{"station": "07374000", "start": "2024-01-01", "end": "2024-01-03"}], "unresolved": []}
+        )
+    )
+    monkeypatch.setattr("sys.argv", ["usgs", "plan", str(tmp_path), "--max-days", "2"])
+    main()
+    plan = json.loads((tmp_path / "manifests/plan.json").read_text())
+    assert len(plan["scopes"]) == 2
+    assert json.loads(capsys.readouterr().out)["result"]["planned_scopes"] == 2
+    monkeypatch.setattr("sys.argv", ["usgs", "plan", str(tmp_path), "--max-days", "3"])
+    with pytest.raises(ValueError, match="Existing acquisition plan differs"):
+        main()
+
+
+def test_bundle_only_restore_validation_needs_no_native_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from scripts.usgs_acquire import validate_bundles
+    result = rr.from_bundle(FIXTURE.read_bytes())
+    assert isinstance(result, ObservationResult)
+    monkeypatch.setattr(rr, "fetch", lambda *args, **kwargs: result)
+    acquire_scope(tmp_path, Scope("07374000", "2024-01-01", "2024-01-02"))
+    monkeypatch.setattr(rr, "audit_cache", lambda _: pytest.fail("Bundle verification must not audit copied native cache"))
+    assert validate_bundles(tmp_path) == {"scopes": 1, "rows": 2, "planned_scopes_complete": False}

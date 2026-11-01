@@ -84,7 +84,11 @@ class USGSArchive(Archive):
     def restore(
         self, generation: str, workspace: Path, *, validate: Callable[[Path], object] | None = None
     ) -> dict[str, Any]:
-        """Restore only a completed delivery into a new or empty workspace."""
+        """Restore delivery bytes into an empty workspace, not a relocated RR cache.
+
+        RR local seals bind filesystem identities. Read native snapshots through
+        the published S3 cache root; restored bundles remain locally readable.
+        """
         self._generation(generation)
         if workspace.exists() and any(workspace.iterdir()):
             raise ValueError("Restore requires an empty workspace")

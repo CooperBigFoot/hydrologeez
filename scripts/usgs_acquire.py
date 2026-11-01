@@ -86,16 +86,9 @@ def acquire_scope(workspace: Path, scope: Scope) -> dict[str, Any]:
     """Caller holds workspace lock. Refresh scopes lacking a valid bundle commit."""
     os.environ["RIVRETRIEVE_CACHE_DIR"] = str((workspace / "cache").resolve())
     marker = workspace / "manifests/scopes" / f"{scope.key}.json"
-    if marker.exists():
-        record = json.loads(marker.read_text())
-        bundle = workspace / record["bundle"]
-        if (
-            record["status"] == "complete"
-            and bundle.is_file()
-            and checksum(bundle) == record["sha256"]
-            and rr.cache_status("usgs_nwis").committed_path is not None
-        ):
-            return record
+    record = completed_scope(workspace, scope)
+    if record is not None:
+        return record
     selection = rr.find(
         provider="usgs_nwis", station=scope.station, quantity="discharge", frequency="daily", statistic="mean"
     )
@@ -114,6 +107,8 @@ def acquire_scope(workspace: Path, scope: Scope) -> dict[str, Any]:
         "rows": result.data.height,
         "outcomes": [o.model_dump(mode="json") for o in result.outcomes],
         "rr_revision": RR_REVISION,
+        "uv_lock_sha256": checksum(Path(__file__).resolve().parent.parent / "uv.lock"),
+        "script_sha256": checksum(Path(__file__)),
     }
     try:
         validate_result(restored)
@@ -125,11 +120,7 @@ def acquire_scope(workspace: Path, scope: Scope) -> dict[str, Any]:
     return record
 
 
-def validate_workspace(workspace: Path) -> dict[str, Any]:
-    """Audit cache, verify publisher bundles, and require matching cache-only readback."""
-    os.environ["RIVRETRIEVE_CACHE_DIR"] = str((workspace / "cache").resolve())
-    audit = rr.audit_cache("usgs_nwis")
-    records = []
+def bundle_records(workspace: Path) -> Iterator[tuple[dict[str, Any], ObservationResult]]:
     for marker in sorted((workspace / "manifests/scopes").glob("*.json")):
         record = json.loads(marker.read_text())
         if record["status"] != "complete":
@@ -141,6 +132,27 @@ def validate_workspace(workspace: Path) -> dict[str, Any]:
         if not isinstance(result, ObservationResult):
             raise ValueError("Expected observation bundle")
         validate_result(result)
+        yield record, result
+
+
+def validate_bundles(workspace: Path) -> dict[str, Any]:
+    records = [record for record, _ in bundle_records(workspace)]
+    if not records:
+        raise ValueError("No completed acquisition scopes")
+    plan = workspace / "manifests/plan.json"
+    complete = False
+    if plan.exists():
+        planned = json.loads(plan.read_text())["scopes"]
+        complete = {Scope(**r["scope"]).key for r in records} >= {Scope(**s).key for s in planned}
+    return {"scopes": len(records), "rows": sum(r["rows"] for r in records), "planned_scopes_complete": complete}
+
+
+def validate_workspace(workspace: Path, *, cache_root: str | None = None) -> dict[str, Any]:
+    """Verify native reads; reuse can attempt HTTP but a fallback result is rejected."""
+    os.environ["RIVRETRIEVE_CACHE_DIR"] = cache_root or str((workspace / "cache").resolve())
+    audit = rr.audit_cache("usgs_nwis")
+    summary = validate_bundles(workspace)
+    for record, result in bundle_records(workspace):
         scope = Scope(**record["scope"])
         selection = rr.find(
             provider="usgs_nwis", station=scope.station, quantity="discharge", frequency="daily", statistic="mean"
@@ -150,7 +162,32 @@ def validate_workspace(workspace: Path) -> dict[str, Any]:
             raise ValueError("Restore readback required source acquisition instead of cache reuse")
         keys = ["station_id", "series_id", "facts_id", "time"]
         assert_frame_equal(held.data.sort(keys), result.data.sort(keys))
-        records.append(record)
-    if not records:
-        raise ValueError("No completed acquisition scopes")
-    return {"scopes": len(records), "rows": sum(r["rows"] for r in records), "cache_audit": str(audit)}
+    return {**summary, "cache_audit": str(audit)}
+
+
+def plan_scopes(inventory: dict[str, Any], max_days: int) -> list[Scope]:
+    if inventory["unresolved"]:
+        raise ValueError("Inventory has unresolved selection/history; resolve before planning full acquisition")
+    return [
+        scope
+        for station in inventory["stations"]
+        for scope in split_scope(station["station"], station["start"], station["end"], max_days)
+    ]
+
+
+def completed_scope(workspace: Path, scope: Scope) -> dict[str, Any] | None:
+    """A completion marker needs both its bundle and a committed native cache."""
+    marker = workspace / "manifests/scopes" / f"{scope.key}.json"
+    if not marker.exists():
+        return None
+    record = json.loads(marker.read_text())
+    bundle = workspace / record["bundle"]
+    os.environ["RIVRETRIEVE_CACHE_DIR"] = str((workspace / "cache").resolve())
+    if (
+        record["status"] == "complete"
+        and bundle.is_file()
+        and checksum(bundle) == record["sha256"]
+        and rr.cache_status("usgs_nwis").committed_path is not None
+    ):
+        return record
+    return None
