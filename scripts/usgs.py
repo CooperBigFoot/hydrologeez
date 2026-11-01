@@ -24,7 +24,7 @@ from scripts.usgs_acquire import (
 from scripts.usgs_archive import USGSArchive, workspace_lock
 from scripts.usgs_inventory import build_inventory
 from scripts.usgs_parts import acquire_part, plan_parts, verify_part, verify_parts
-from scripts.usgs_quota import reconcile, reserve
+from scripts.usgs_quota import QuotaUnavailableError, reconcile, reserve
 
 
 def main() -> None:
@@ -191,4 +191,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except QuotaUnavailableError as error:
+        print(str(error))
+        raise SystemExit(75) from error

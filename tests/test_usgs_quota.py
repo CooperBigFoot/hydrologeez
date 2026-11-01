@@ -33,7 +33,7 @@ def test_budget_rejection_reports_wait(tmp_path: Path, monkeypatch: pytest.Monke
     reservation = quota.reserve(tmp_path, "part-a", 900)
     quota.reconcile(tmp_path, reservation, 900)
     monkeypatch.setattr(quota.time, "time", lambda: 1100.0)
-    with pytest.raises(ValueError, match="3500 seconds"):
+    with pytest.raises(quota.QuotaUnavailableError, match="3500 seconds"):
         quota.reserve(tmp_path, "part-b", 1)
 
 

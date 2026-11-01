@@ -188,8 +188,9 @@ part additionally has one writer. No daemon or automatic retry is installed.
 The shared quota ledger reserves three attempts per estimated page against 900
 requests per rolling hour, leaving headroom under the observed keyed 1000/hour
 allowance. **Use an authenticated environment and seed recent external usage**
-with `reserve-source-usage` before starting workers. Ledger exhaustion exits with
-remaining wait; wait outside the lock before explicit continuation. Unreconciled
+with `reserve-source-usage` before starting workers. Ledger exhaustion before any source request exits with code 75 and
+remaining wait; the operator coordinator may wait outside locks and retry only this
+admission outcome. All other failures stop both workers. Unreconciled
 reservations remain charged until explicit reconciliation; they never expire while
 requests may still be running. Actual retained call IDs are charged for an hour
 after reconciliation. Seeded external usage is charged for an hour from seeding.

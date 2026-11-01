@@ -19,6 +19,10 @@ BUDGET = 900
 WINDOW_SECONDS = 3600
 
 
+class QuotaUnavailableError(ValueError):
+    """Prefetch admission only: no request has started and retry is safe."""
+
+
 class Reservation(TypedDict):
     part_id: str
     attempts: int
@@ -53,7 +57,9 @@ def reserve(workspace: Path, part_id: str, attempts: int) -> str:
         if used + attempts > BUDGET:
             pending = sum(row["attempts"] for row in active if not row["reconciled"])
             if pending + attempts > BUDGET:
-                raise ValueError("USGS request budget exhausted; outstanding reservations require reconciliation")
+                raise QuotaUnavailableError(
+                    "USGS request budget exhausted; outstanding reservations require reconciliation"
+                )
             wait = 0
             completed = [row for row in active if row["reconciled"]]
             for row in sorted(completed, key=lambda row: row["timestamp"]):
@@ -61,7 +67,7 @@ def reserve(workspace: Path, part_id: str, attempts: int) -> str:
                 wait = math.ceil(row["timestamp"] + WINDOW_SECONDS - now)
                 if used + attempts <= BUDGET:
                     break
-            raise ValueError(f"USGS request budget exhausted; retry after {wait} seconds")
+            raise QuotaUnavailableError(f"USGS request budget exhausted; retry after {wait} seconds")
         reservation_id = uuid4().hex
         records[reservation_id] = {"part_id": part_id, "attempts": attempts, "timestamp": now, "reconciled": False}
     return reservation_id
