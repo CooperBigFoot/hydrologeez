@@ -16,7 +16,10 @@ bundle, then commits its marker. A missing or changed bundle forces reacquisitio
 not cache reuse: recovered source vintage may differ. Failed result bundles remain
 for diagnosis. A process lock serializes acquisition, validation and publication.
 Use `recover WORKSPACE` for RR-supported interrupted-cache recovery. Do not alter
-native manifests or integrity seals.
+native manifests or integrity seals. Completion requires the saved acquisition
+outcome IDs to remain in the current cache metadata. Use nonoverlapping pilot
+scopes in a workspace: overlapping refreshes can supersede earlier vintages and
+require reacquisition. Generated acquisition-plan scopes do not overlap.
 
 ## Inventory and bounded acquisition
 
