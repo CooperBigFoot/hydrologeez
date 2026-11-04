@@ -92,7 +92,7 @@ def main() -> None:
             return verify_parts(path) if (path / "manifests/parts-plan.json").exists() else validate_workspace(path)
 
         if args.command == "publish":
-            result = archive.publish(workspace, args.generation, validate=validate_delivery)
+            result = archive.publish(workspace, args.generation)
         elif args.command == "restore-files":
             result = archive.restore(args.generation, workspace, validate=validate_delivery)
             result["native_local_cache_usable"] = True

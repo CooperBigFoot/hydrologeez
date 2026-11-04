@@ -123,24 +123,84 @@ def test_rejects_symlinked_cache_root(tmp_path: Path) -> None:
             USGSArchive(client).publish(workspace, "pilot")
 
 
-def test_cli_restore_verifies_native_cache_and_bundles(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("parts", [False, True])
+def test_cli_publish_delivers_bytes_without_native_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, parts: bool
 ) -> None:
     from unittest.mock import patch
 
     from scripts.usgs import main
 
+    for directory in ("cache", "receipts", "manifests"):
+        (tmp_path / directory).mkdir()
+    payload = b"native cache bytes"
+    (tmp_path / "cache/data").write_bytes(payload)
+    if parts:
+        (tmp_path / "manifests/parts-plan.json").write_text("{}")
+    monkeypatch.setattr("sys.argv", ["usgs", "publish", str(tmp_path), "pilot"])
+    with mock_aws():
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket="hydrologeez-daymet")
+        with (
+            patch("scripts.usgs.boto3.Session") as session,
+            patch("scripts.usgs.validate_workspace", side_effect=AssertionError("Native validation invoked")),
+            patch("scripts.usgs.verify_parts", side_effect=AssertionError("Native validation invoked")),
+        ):
+            session.return_value.client.return_value = client
+            main()
+        response = client.get_object(Bucket="hydrologeez-daymet", Key="streamflow/usgs/cache/pilot/data")
+        assert response["Body"].read() == payload
+        marker = client.head_object(Bucket="hydrologeez-daymet", Key="streamflow/usgs/manifests/pilot/complete.json")
+        assert marker["ContentLength"] > 0
+
+
+@pytest.mark.parametrize("parts", [False, True])
+def test_cli_restore_verifies_native_cache_and_bundles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], parts: bool
+) -> None:
+    from unittest.mock import patch
+
+    from scripts.usgs import main
+
+    if parts:
+        (tmp_path / "manifests").mkdir()
+        (tmp_path / "manifests/parts-plan.json").write_text("{}")
+    validator = "scripts.usgs.verify_parts" if parts else "scripts.usgs.validate_workspace"
     monkeypatch.setattr("sys.argv", ["usgs", "restore-files", str(tmp_path), "pilot"])
     with (
         patch("scripts.usgs.boto3.Session"),
         patch("scripts.usgs.USGSArchive") as archive,
-        patch("scripts.usgs.validate_workspace") as validate,
+        patch(validator) as validate,
     ):
         archive.return_value.restore.return_value = {"generation": "pilot"}
         main()
         archive.return_value.restore.call_args.kwargs["validate"](tmp_path)
         validate.assert_called_once_with(tmp_path)
     assert '"native_local_cache_usable": true' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("parts", [False, True])
+def test_cli_remote_verifies_delivered_native_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, parts: bool
+) -> None:
+    from unittest.mock import patch
+
+    from scripts.usgs import main
+
+    if parts:
+        (tmp_path / "manifests").mkdir()
+        (tmp_path / "manifests/parts-plan.json").write_text("{}")
+    validator = "scripts.usgs.verify_parts" if parts else "scripts.usgs.validate_workspace"
+    monkeypatch.setattr("sys.argv", ["usgs", "verify-remote", str(tmp_path), "pilot"])
+    with patch("scripts.usgs.boto3.Session") as session, patch(validator, return_value={}) as validate:
+        credentials = session.return_value.get_credentials.return_value.get_frozen_credentials.return_value
+        credentials.access_key = "testing"
+        credentials.secret_key = "testing"
+        credentials.token = "testing"
+        for name in ("ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "SESSION_TOKEN", "ENDPOINT_URL", "REGION"):
+            monkeypatch.setenv(f"RIVRETRIEVE_S3_{name}", "testing")
+        main()
+        validate.assert_called_once_with(tmp_path, cache_root="s3://hydrologeez-daymet/streamflow/usgs/cache/pilot")
 
 
 def test_shared_part_workers_exclude_publication(tmp_path: Path) -> None:

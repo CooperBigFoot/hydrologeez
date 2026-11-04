@@ -96,8 +96,10 @@ uv run --group acquisition python -m scripts.usgs verify-remote EMPTY_WORKSPACE 
 
 Destination is fixed to `s3://hydrologeez-daymet/streamflow/usgs/` at the Hetzner fsn1
 endpoint. Credentials come from the AWS profile/environment, never arguments or
-manifests. Publication holds the workspace lock, verifies uploaded bytes by full
-GET SHA256, and writes the matching generation marker last. Completed generations
+manifests. Finish local verification (`verify` or `verify-parts`) before publication
+and keep workers stopped. Publication does not repeat native cache or bundle
+validation: it holds the workspace lock, verifies uploaded bytes by full GET
+SHA256, and writes the matching generation marker last. Completed generations
 are immutable. A delivery marker certifies matching bytes, **not national acquisition
 completion**. Inspect inventory unresolved rows and `planned_scopes_complete`.
 
@@ -200,8 +202,10 @@ does not expose response remaining-quota headers, so no remaining count is inven
 Respect separately recorded source Retry-After and retain uncertain attempt charges.
 
 `verify-parts` audits the original root and every independent part and proves exact
-logical coverage. Existing `publish`, `restore-files`, and `verify-remote` select
-this validator when `parts-plan.json` exists. Publish only while workers are stopped.
+logical coverage. `restore-files` and `verify-remote` select this validator when
+`parts-plan.json` exists. `publish` transfers bytes without repeating `verify-parts`;
+local verification and delivered-copy verification remain required. Publish only
+while workers are stopped.
 `restore-files` verifies every restored local root; `verify-remote` verifies each
 published S3 root independently. Once delivered readback succeeds, use
 `verify-remote ... --complete` to write immutable `manifests/GENERATION/verified-delivery.json`.
