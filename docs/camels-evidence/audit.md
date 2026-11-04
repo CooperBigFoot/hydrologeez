@@ -43,6 +43,10 @@ PET established convention: attribute gauge_lat; temperature (Tmax+Tmin)/2; FAO5
 
 ## Evidence files
 
+The audit scripts and intermediate JSON below remain session artifacts; only
+`independent_examples.json` is included beside this report. The portable
+`usgs-areas.json` retains original selected area strings and converted values.
+
 - `audit_source.py` and `audit_source.json`: independent basin-by-basin ranges, counts, missing examples and headers (not derived from implementation).
 - `area_audit.py` and `usgs_area_rows.json`: original selected packaged USGS fields.
 - `independent_examples.json`: precise source lines plus worked values.
