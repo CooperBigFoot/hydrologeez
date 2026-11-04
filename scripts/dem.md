@@ -23,6 +23,11 @@ The inventory pins each current object by ETag, size and modification date. Cond
 rejects a changed current object. Original XML retains its publication and survey dates and may
 link to the selected dated release under `historical/`; that link does not imply an obsolete release.
 XML reference systems, metres and one-arc-second spacing are checked before accepting metadata.
+The tile/product title must match. Dated official TIFF links are checked by HEAD against the
+frozen current TIFF size and ETag; disagreement fails reconciliation. Legacy links without a
+comparable dated object are retained with a reason in `unverifiable_releases`; their bytes can
+be verified but the report remains incomplete pending explicit assessment. New release-checked
+receipts use a separate namespace, so older transfer-only receipts cannot bypass these checks.
 Auxiliary `.tif.aux.xml` files are retained without treating them as FGDC metadata.
 
 Transfer is sequential with one temporary source file (largest selected object plus an 8 MiB

@@ -149,3 +149,109 @@ def test_selection_excludes_wrong_resolution_files_in_current_directory() -> Non
     selected, missing = select([native, wrong, aux], box(-89.9, 29.1, -89.1, 29.9))
     assert selected == [native, aux]
     assert missing == {"n30w090": ["xml"]}
+
+
+@pytest.mark.parametrize("failure", ["xml", "upload"])
+def test_expected_file_failures_leave_reconciliation_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    import hashlib
+    import json
+    from dataclasses import asdict
+
+    import boto3
+    import responses
+    from boto3.exceptions import S3UploadFailedError
+    from moto import mock_aws
+
+    from scripts.daymet_archive import Archive
+    from scripts.dem_acquire import run
+    from scripts.dem_inventory import BASE, CURRENT, Source
+
+    data = b"not valid XML"
+    source = Source(
+        "n39w105", "n39w105/USGS_1_n39w105.xml", len(data), '"' + hashlib.md5(data).hexdigest() + '"', "date"
+    )
+    if failure == "upload":
+        source = Source(source.tile, source.name.replace(".xml", ".tif"), source.size, source.etag, source.modified)
+    snapshot = tmp_path / "inventory.json"
+    snapshot.write_text(json.dumps({"source_prefix": BASE + CURRENT, "missing": {}, "files": [asdict(source)]}))
+    with mock_aws(), responses.RequestsMock() as server:
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket="hydrologeez-daymet")
+        original = client.upload_file
+
+        def upload(Filename: str, Bucket: str, Key: str, **kwargs: object) -> None:
+            if "/native/" in Key:
+                raise S3UploadFailedError("simulated provider outage")
+            original(Filename, Bucket, Key)
+
+        if failure == "upload":
+            monkeypatch.setattr(client, "upload_file", upload)
+        server.get(source.url, body=data, headers={"ETag": source.etag})
+        report = run(snapshot, tmp_path / "stage", Archive(client), requests.Session())
+        assert not report["complete"]
+        assert report["failed"][0]["error"] == ("ParseError" if failure == "xml" else "S3UploadFailedError")
+        assert json.loads((tmp_path / "stage/report.json").read_text()) == report
+
+
+def test_release_link_checks_frozen_tiff_and_reports_legacy() -> None:
+    import responses
+
+    from scripts.dem_acquire import release_identity
+    from scripts.dem_inventory import Source
+
+    source = Source("n39w105", "n39w105/USGS_1_n39w105.tif", 123, '"' + "a" * 32 + '"', "date")
+    url = "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1/TIFF/historical/n39w105/USGS_1_n39w105_20260528.tif"
+    fields = {"networkr": url, "pubdate": "20260528", "title": "USGS 1 Arc Second n39w105 20260528"}
+    with responses.RequestsMock() as server:
+        server.head(url, headers={"ETag": source.etag, "Content-Length": "123"})
+        assert release_identity(requests.Session(), fields, source)["status"] == "matched"
+    with responses.RequestsMock() as server:
+        server.head(url, headers={"ETag": '"' + "b" * 32 + '"', "Content-Length": "123"})
+        with pytest.raises(ValueError, match="release"):
+            release_identity(requests.Session(), fields, source)
+    assert (
+        release_identity(
+            requests.Session(),
+            {"networkr": "ftp://legacy/tile.tif", "pubdate": "20191212", "title": "USGS 1 Arc Second n39w105 20191212"},
+            source,
+        )["status"]
+        == "unverifiable"
+    )
+
+
+def test_old_receipt_cannot_bypass_release_check(tmp_path: Path) -> None:
+    import hashlib
+    import json
+    from dataclasses import asdict
+
+    import boto3
+    import responses
+    from moto import mock_aws
+
+    from scripts.daymet_archive import Archive, checksum
+    from scripts.dem_acquire import run
+    from scripts.dem_inventory import BASE, CURRENT, PREFIX, Source
+
+    data = b"malformed metadata must not be skipped"
+    source = Source(
+        "n39w105", "n39w105/USGS_1_n39w105.xml", len(data), '"' + hashlib.md5(data).hexdigest() + '"', "date"
+    )
+    snapshot = tmp_path / "inventory.json"
+    snapshot.write_text(json.dumps({"source_prefix": BASE + CURRENT, "missing": {}, "files": [asdict(source)]}))
+    key = f"{PREFIX}/native/{source.name}"
+    old_key = f"{PREFIX}/inventories/{checksum(snapshot)}/receipts/{source.name}.json"
+    old = json.dumps(
+        {"key": key, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(), "etag": source.etag}
+    ).encode()
+    with mock_aws(), responses.RequestsMock() as server:
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket="hydrologeez-daymet")
+        client.put_object(Bucket="hydrologeez-daymet", Key=key, Body=data)
+        client.put_object(Bucket="hydrologeez-daymet", Key=old_key, Body=old)
+        server.get(source.url, body=data, headers={"ETag": source.etag})
+        report = run(snapshot, tmp_path / "stage", Archive(client), requests.Session())
+        assert not report["complete"]
+        assert report["failed"][0]["error"] == "ParseError"
+        assert client.get_object(Bucket="hydrologeez-daymet", Key=old_key)["Body"].read() == old
