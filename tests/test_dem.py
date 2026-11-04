@@ -255,3 +255,29 @@ def test_old_receipt_cannot_bypass_release_check(tmp_path: Path) -> None:
         assert not report["complete"]
         assert report["failed"][0]["error"] == "ParseError"
         assert client.get_object(Bucket="hydrologeez-daymet", Key=old_key)["Body"].read() == old
+
+
+@pytest.mark.parametrize(
+    "title, accepted",
+    [
+        ("USGS 1 arc-second n30w089 1 x 1 degree", True),
+        ("USGS 1 Arc Second n30w089 20191212", True),
+        ("USGS 1/3 arc-second n30w089 1 x 1 degree", False),
+        ("USGS 1 arc-second n30w090 1 x 1 degree", False),
+    ],
+)
+def test_legacy_release_title_keeps_product_and_tile_checks(title: str, accepted: bool) -> None:
+    from scripts.dem_acquire import release_identity
+    from scripts.dem_inventory import Source
+
+    source = Source("n30w089", "n30w089/USGS_1_n30w089.tif", 123, '"' + "a" * 32 + '"', "date")
+    fields = {
+        "title": title,
+        "pubdate": "20191212",
+        "networkr": "ftp://rockyftp.cr.usgs.gov/vdelivery/Datasets/Staged/Elevation/1/TIFF/n30w089/USGS_1_n30w089.tif",
+    }
+    if accepted:
+        assert release_identity(requests.Session(), fields, source)["status"] == "unverifiable"
+    else:
+        with pytest.raises(ValueError, match="tile/product"):
+            release_identity(requests.Session(), fields, source)

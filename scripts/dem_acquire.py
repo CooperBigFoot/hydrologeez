@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import TypedDict, cast
@@ -98,7 +99,9 @@ def metadata(path: Path) -> dict[str, str]:
 
 def release_identity(session: requests.Session, fields: dict[str, str], source: Source) -> dict[str, str]:
     url = fields["networkr"]
-    if f"1 Arc Second {source.tile} " not in fields.get("title", ""):
+    if not re.fullmatch(
+        rf"USGS 1 (?:Arc Second|arc-second) {source.tile} (?:\d{{8}}|1 x 1 degree)", fields.get("title", "")
+    ):
         raise ValueError("Metadata release tile/product mismatch")
     expected = (
         "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1/TIFF/historical/"
