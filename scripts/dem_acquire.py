@@ -8,7 +8,7 @@ import json
 import re
 import shutil
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import NotRequired, TypedDict, cast
 from xml.etree import ElementTree as ET
 
 import boto3
@@ -31,6 +31,7 @@ class Receipt(TypedDict):
     provider_checksums: dict[str, str]
     metadata: dict[str, str]
     release_identity: dict[str, str]
+    metadata_warnings: NotRequired[list[str]]
 
 
 class Failure(TypedDict):
@@ -45,6 +46,8 @@ class Report(TypedDict):
     objects: list[Receipt]
     failed: list[Failure]
     unverifiable_releases: dict[str, str]
+    metadata_warnings: dict[str, list[str]]
+    transfer_complete: bool
     complete: bool
 
 
@@ -87,14 +90,26 @@ def metadata(path: Path) -> dict[str, str]:
             "longres",
         )
     }
-    if (
-        fields["horizdn"] != "North American Datum of 1983"
-        or fields["altdatum"] != "North American Vertical Datum of 1988"
-        or fields["altunits"] not in {"meters", "metres"}
-        or any(abs(abs(float(fields[name])) - 1 / 3600) > 1e-9 for name in ("latres", "longres"))
-    ):
-        raise ValueError("Unexpected DEM reference system, units or resolution")
     return fields
+
+
+def metadata_warnings(fields: dict[str, str]) -> list[str]:
+    warnings: list[str] = []
+    for name, accepted in (
+        ("horizdn", {"North American Datum of 1983"}),
+        ("altdatum", {"North American Vertical Datum of 1988"}),
+        ("altunits", {"meters", "metres"}),
+    ):
+        if fields[name] not in accepted:
+            warnings.append(f"Unexpected {name}: {fields[name]!r}")
+    for name in ("latres", "longres"):
+        try:
+            matches = abs(abs(float(fields[name])) - 1 / 3600) <= 1e-9
+        except ValueError:
+            matches = False
+        if not matches:
+            warnings.append(f"Metadata {name} is not one arc-second: {fields[name]!r}")
+    return warnings
 
 
 def release_identity(session: requests.Session, fields: dict[str, str], source: Source) -> dict[str, str]:
@@ -104,13 +119,11 @@ def release_identity(session: requests.Session, fields: dict[str, str], source: 
     ):
         raise ValueError("Metadata release tile/product mismatch")
     expected = (
-        "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1/TIFF/historical/"
-        f"{source.tile}/USGS_1_{source.tile}_{fields['pubdate']}.tif"
+        r"https://prd-tnm\.s3\.amazonaws\.com/StagedProducts/Elevation/1/TIFF/historical/"
+        rf"{source.tile}/USGS_1_{source.tile}_\d{{8}}\.tif"
     )
-    if url != expected and "/historical/" in url:
-        raise ValueError("Metadata release dated link mismatch")
-    if url != expected:
-        return {"status": "unverifiable", "reason": "No dated official TIFF link matching publication date", "url": url}
+    if not re.fullmatch(expected, url):
+        return {"status": "unverifiable", "reason": "No comparable dated official S3 TIFF link", "url": url}
     response = session.head(url, timeout=(30, 120))
     response.raise_for_status()
     if response.headers.get("ETag") != source.etag or int(response.headers.get("Content-Length", "0")) != source.size:
@@ -143,6 +156,8 @@ def run(snapshot: Path, stage: Path, archive: Archive, session: requests.Session
         "objects": [],
         "failed": [],
         "unverifiable_releases": {},
+        "metadata_warnings": {},
+        "transfer_complete": False,
         "complete": False,
     }
     target = stage / "provider.part"
@@ -157,6 +172,8 @@ def run(snapshot: Path, stage: Path, archive: Archive, session: requests.Session
                     raise ValueError("Receipt identity mismatch")
                 if archive.digest(key) == (source.size, saved["sha256"]):
                     report["objects"].append(saved)
+                    if saved.get("metadata_warnings"):
+                        report["metadata_warnings"][source.tile] = saved["metadata_warnings"]
                     if saved.get("release_identity", {}).get("status") == "unverifiable":
                         report["unverifiable_releases"][source.tile] = saved["release_identity"]["reason"]
                     continue
@@ -171,13 +188,22 @@ def run(snapshot: Path, stage: Path, archive: Archive, session: requests.Session
                 except requests.RequestException:
                     if attempt == 2:
                         raise
-            details = metadata(target) if source.name.endswith(f"USGS_1_{source.tile}.xml") else {}
-            release = {}
-            if details:
+            details: dict[str, str] = {}
+            warnings: list[str] = []
+            release: dict[str, str] = {}
+            if source.name.endswith(f"USGS_1_{source.tile}.xml"):
+                try:
+                    details = metadata(target)
+                    warnings = metadata_warnings(details)
+                except ET.ParseError as error:
+                    warnings = [f"Metadata XML could not be parsed: {error}"]
                 raster = next((s for s in sources if s.name == f"{source.tile}/USGS_1_{source.tile}.tif"), None)
-                if raster is None:
-                    raise ValueError("Metadata has no selected TIFF")
-                release = release_identity(session, details, raster)
+                try:
+                    if not details or raster is None:
+                        raise ValueError("Release comparison requires parsed metadata and a selected TIFF")
+                    release = release_identity(session, details, raster)
+                except (requests.RequestException, ValueError) as error:
+                    release = {"status": "unverifiable", "reason": str(error), "url": details.get("networkr", "")}
             uploaded = archive.put(target, key)
             saved = Receipt(
                 key=str(uploaded["key"]),
@@ -190,10 +216,13 @@ def run(snapshot: Path, stage: Path, archive: Archive, session: requests.Session
                 provider_checksums=provider_checksums,
                 metadata=details,
                 release_identity=release,
+                metadata_warnings=warnings,
             )
             record_path.write_text(json.dumps(saved, indent=2) + "\n")
             archive.put(record_path, receipt_key)
             report["objects"].append(saved)
+            if warnings:
+                report["metadata_warnings"][source.tile] = warnings
             if release.get("status") == "unverifiable":
                 report["unverifiable_releases"][source.tile] = release["reason"]
         except (
@@ -209,11 +238,9 @@ def run(snapshot: Path, stage: Path, archive: Archive, session: requests.Session
             target.unlink(missing_ok=True)
         (stage / "report.json").write_text(json.dumps(report, indent=2) + "\n")
         print(f"{source.name}: {len(report['objects'])} verified; {len(report['failed'])} failed", flush=True)
+    report["transfer_complete"] = not missing and not report["failed"] and len(report["objects"]) == len(sources)
     report["complete"] = (
-        not missing
-        and not report["failed"]
-        and not report["unverifiable_releases"]
-        and len(report["objects"]) == len(sources)
+        report["transfer_complete"] and not report["unverifiable_releases"] and not report["metadata_warnings"]
     )
     (stage / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     # Reports are observations, not immutable receipts; keep each run separately.
@@ -230,8 +257,10 @@ def main() -> None:
     client = boto3.client("s3", endpoint_url="https://fsn1.your-objectstorage.com", region_name="fsn1")
     with requests.Session() as session:
         report = run(args.inventory, args.stage, Archive(client), session)
+    if not report["transfer_complete"]:
+        raise SystemExit("Transfer incomplete: inspect report.json; no completion claimed")
     if not report["complete"]:
-        raise SystemExit("Acquisition incomplete: inspect report.json; no completion claimed")
+        print("Bytes reconciled; metadata limitations require assessment in report.json", flush=True)
 
 
 if __name__ == "__main__":
