@@ -48,7 +48,7 @@ class Basin:
     missing_forcing_dates: int
     invalid_forcing_rows: int
     published_missing_observations: int
-    absent_observation_dates: int
+    absent_observation_dates: int  # Missing rows within observation bounds, not forcing bounds.
 
 
 @dataclass(frozen=True)

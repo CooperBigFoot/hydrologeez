@@ -31,7 +31,9 @@ Output must not exist. Metadata is written last; an interrupted directory is not
 a completed store. Keep raw files and the area snapshot for reproducibility.
 Generated stores are not source-controlled. `metadata.json` records IDs, units,
 source members, full per-basin date bounds, header areas, separate USGS areas,
-and invalid/gap counts. Per-basin `.npy` arrays contain dense daily forcing,
+and invalid/gap counts. `absent_observation_dates` counts missing rows only
+within each observation record's own bounds (zero in this source); the audit
+separately counts 162,575 absent dates over the full forcing timeline. Per-basin `.npy` arrays contain dense daily forcing,
 original cfs, exact QC strings and source-row presence. Observations have their
 own full date range, independent of forcing. Negative discharge is preserved in
 cfs but becomes NaN in mm/day. No QC filtering is applied.
@@ -106,6 +108,11 @@ parameter copies took 0.19–5.62 ms for the small case and 198.72–202.59 ms f
 the larger one, including normal validation. Per-file mmap opening and first
 observed selection costs are included; these are bounded measurements, not a
 speed guarantee. Observation arrays add selection memory beyond forcing bytes.
+Unlike the earlier forcing-only single-array experiment, this selection opens
+four array families per basin and aligns observations. Repeated 128-basin
+selections measured 0.47–2.03 s in a follow-up probe; many mmap file opens are a
+known cost, not a claim to match the experiment's ~6 ms forcing-only load. The
+selection is intended to be reused, not reopened for each parameter evaluation.
 
 Run `uv run --all-groups pytest`, `uv run ruff check .`,
 `uv run ruff format --check .` and `uv run --all-groups ty check`.
