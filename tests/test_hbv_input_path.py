@@ -55,3 +55,11 @@ def test_resident_memory_orders_preserve_complete_hbv_result() -> None:
     np.testing.assert_array_equal(reordered.outlet, contiguous.outlet)
     for name in ("zone", "groundwater", "routing"):
         np.testing.assert_array_equal(getattr(reordered.final, name), getattr(contiguous.final, name))
+
+
+def test_source_columns_and_mean_temperature() -> None:
+    # CAMELS 03049800, 1980-01-01: P=0, Tmax=.74, Tmin=-5.50.
+    rows = np.array([[1980, 1, 1, 12, 32832, 0, 170.60, 0, 0.74, -5.50, 400.0]])
+    dates, values = prepare(rows, 40.48)
+    assert dates.tolist() == [722815]
+    np.testing.assert_allclose(values[0, :2], [0, -2.38], rtol=0, atol=1e-14)

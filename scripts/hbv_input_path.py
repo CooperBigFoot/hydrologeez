@@ -17,14 +17,13 @@ from typing import Any
 import numba
 import numpy as np
 import pyarrow as pa
-import pyarrow.compute as pc
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 import zarr
 from numpy.typing import NDArray
 from zarr.codecs import BloscCodec
 
-from hydrologeez.hbv_light import Forcing, Memory, Parameters, simulate
+from hydrologeez.hbv_light import Forcing, Memory, Parameters, Result, simulate
 from hydrologeez.hbv_light.model import _validate
 
 Array = NDArray[np.float64]
@@ -51,16 +50,18 @@ def prepare(rows: Array, latitude: float) -> tuple[NDArray[np.int64], Array]:
 def construct(directory: Path, ids: list[str], dates: NDArray[np.int64], values: Array) -> dict[str, float]:
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "metadata.json").write_text(
-        json.dumps({"ids": ids, "dates": dates.tolist(), "units": ["mm/day", "C", "mm/day"]})
+        json.dumps({"ids": ids, "start_ordinal": int(dates[0]), "days": len(dates), "units": ["mm/day", "C", "mm/day"]})
     )
     times: dict[str, float] = {}
     for order in ("time", "basin"):
+        start = time.perf_counter()
         data = values if order == "time" else np.ascontiguousarray(values.transpose(1, 0, 2))
+        times[f"layout-{order}"] = time.perf_counter() - start
         start = time.perf_counter()
         np.save(directory / f"{order}.npy", data)
         times[f"numpy-{order}"] = time.perf_counter() - start
         start = time.perf_counter()
-        chunks = (365, 16, 3) if order == "time" else (1, 365, 3)
+        chunks = (365, 16, 3) if order == "time" else (16, 365, 3)
         target = zarr.create_array(
             str(directory / f"{order}.zarr"),
             overwrite=True,
@@ -71,6 +72,7 @@ def construct(directory: Path, ids: list[str], dates: NDArray[np.int64], values:
         )
         target[:] = data
         times[f"zarr-{order}"] = time.perf_counter() - start
+    start = time.perf_counter()
     tables = [
         pa.table(
             {
@@ -81,6 +83,7 @@ def construct(directory: Path, ids: list[str], dates: NDArray[np.int64], values:
         )
         for i, basin in enumerate(ids)
     ]
+    times["parquet-table-preparation"] = time.perf_counter() - start
     start = time.perf_counter()
     (directory / "basins").mkdir(exist_ok=True)
     for basin, table in zip(ids, tables, strict=True):
@@ -119,18 +122,21 @@ def load(
         table = ds.dataset(source, format="parquet").to_table(
             columns=["basin", "date", "P", "T", "PET"],
             filter=ds.field("basin").isin(selected)
-            & (ds.field("date") >= meta["dates"][start])
-            & (ds.field("date") <= meta["dates"][stop - 1]),
+            & (ds.field("date") >= (meta["start_ordinal"] + start))
+            & (ds.field("date") <= (meta["start_ordinal"] + stop - 1)),
             use_threads=False,
         )
         decoded = time.perf_counter() - begin
         begin = time.perf_counter()
-        arrays = []
-        for basin in selected:
-            part = table.filter(pc.call_function("equal", [table["basin"], pa.scalar(basin)])).sort_by("date")
-            np.testing.assert_array_equal(part["date"].to_numpy(), meta["dates"][start:stop])
-            arrays.append(np.column_stack([part[name].to_numpy() for name in ("P", "T", "PET")]))
-        values = np.stack(arrays, axis=1)
+        table = table.sort_by([("basin", "ascending"), ("date", "ascending")])
+        expected_dates = np.arange(meta["start_ordinal"] + start, meta["start_ordinal"] + stop)
+        sorted_ids = sorted(selected)
+        np.testing.assert_array_equal(table["basin"].to_numpy(), np.repeat(sorted_ids, stop - start))
+        np.testing.assert_array_equal(table["date"].to_numpy(), np.tile(expected_dates, len(selected)))
+        basin_values = np.column_stack([table[name].to_numpy() for name in ("P", "T", "PET")]).reshape(
+            len(selected), stop - start, 3
+        )
+        values = basin_values[[sorted_ids.index(basin) for basin in selected]].transpose(1, 0, 2)
     else:
         physical = kind.split("-")[1]
         if kind.startswith("numpy"):
@@ -175,7 +181,7 @@ def inputs(values: Array, copies: int) -> tuple[Forcing, Parameters, Memory]:
     return forcing, parameters, initial
 
 
-def consume(values: Array, copies: int) -> tuple[Array, dict[str, float]]:
+def consume(values: Array, copies: int) -> tuple[Result, dict[str, float]]:
     forcing, parameters, initial = inputs(values, copies)
     begin = time.perf_counter()
     _validate(forcing, parameters, initial, 0, len(values))
@@ -183,7 +189,13 @@ def consume(values: Array, copies: int) -> tuple[Array, dict[str, float]]:
     begin = time.perf_counter()
     result = simulate(forcing, parameters, initial, history=False)
     elapsed = time.perf_counter() - begin
-    return result.outlet, {"validation_probe": validation, "simulate_including_validation": elapsed}
+    return result, {"validation_probe": validation, "simulate_including_validation": elapsed}
+
+
+def equivalent(actual: Result, expected: Result) -> None:
+    np.testing.assert_array_equal(actual.outlet, expected.outlet)
+    for name in ("zone", "groundwater", "routing"):
+        np.testing.assert_array_equal(getattr(actual.final, name), getattr(expected.final, name))
 
 
 def main() -> None:
@@ -194,6 +206,7 @@ def main() -> None:
     args = parser.parse_args()
     numba.set_num_threads(1)
     pa.set_cpu_count(1)
+    zarr.config.set({"async.concurrency": 1, "threading.max_workers": 1, "codec_pipeline.max_workers": 1})
     begin = time.perf_counter()
     attributes = list(csv.DictReader((args.raw / "camels_topo.txt").read_text().splitlines(), delimiter=";"))
     attributes.sort(key=lambda row: row["gauge_id"])
@@ -255,7 +268,7 @@ def main() -> None:
             )
             for repeat in range(4):
                 outlet, times = consume(resident, 4)
-                np.testing.assert_array_equal(outlet, reference)
+                equivalent(outlet, reference)
                 records.append(
                     {
                         "case": label,
@@ -273,7 +286,7 @@ def main() -> None:
                     loading = time.perf_counter() - begin
                     np.testing.assert_array_equal(loaded, expected)
                     outlet, times = consume(loaded, 4)
-                    np.testing.assert_array_equal(outlet, reference)
+                    equivalent(outlet, reference)
                     records.append(
                         {
                             "case": label,
@@ -300,6 +313,7 @@ def main() -> None:
             "zarr": zarr.__version__,
         },
         "threads": 1,
+        "zarr_concurrency": 1,
         "basins": ids,
         "date_window": ["1990-01-01", "2000-01-01 exclusive"],
         "parameter_copies": 4,
@@ -311,7 +325,7 @@ def main() -> None:
         "records": records,
     }
     args.evidence.parent.mkdir(parents=True, exist_ok=True)
-    args.evidence.write_text(json.dumps(evidence, indent=2) + "\n")
+    args.evidence.write_text(json.dumps(evidence, separators=(",", ":")) + "\n")
 
 
 if __name__ == "__main__":
