@@ -22,12 +22,15 @@ An unresolved missing cell prevents a complete report.
 The inventory pins each current object by ETag, size and modification date. Conditional GET
 rejects a changed current object. Original XML retains its publication and survey dates and may
 link to the selected dated release under `historical/`; that link does not imply an obsolete release.
-XML reference systems, metres and one-arc-second spacing are checked before accepting metadata.
-The tile/product title must match. Dated official TIFF links are checked by HEAD against the
-frozen current TIFF size and ETag; disagreement fails reconciliation. Legacy links without a
-comparable dated object are retained with a reason in `unverifiable_releases`; their bytes can
-be verified but the report remains incomplete pending explicit assessment. New release-checked
-receipts use a separate namespace, so older transfer-only receipts cannot bypass these checks.
+XML fields are preserved even when their reference system, units or resolution are unexpected;
+field-specific discrepancies appear in `metadata_warnings`. Invalid XML is also retained with
+a parsing warning, not accepted as verified spatial metadata. The tile/product title and dated
+release link are checked separately. Citation publication dates need not equal filename dates.
+Dated official S3 links for the selected tile are checked against the frozen TIFF size and ETag.
+Alternate provider URLs without comparable identity evidence, unavailable historical objects,
+and identity differences are recorded in `unverifiable_releases`; they do not prevent preserving
+the frozen current bytes.
+These limitations do not prove that the current raster is wrong or that its datum is verified.
 Auxiliary `.tif.aux.xml` files are retained without treating them as FGDC metadata.
 
 Transfer is sequential with one temporary source file (largest selected object plus an 8 MiB
@@ -41,13 +44,18 @@ Only `s3://hydrologeez-daymet/dem/3dep-1arcsec/` is written. Configure AWS crede
 through the standard boto3 environment; the endpoint is `https://fsn1.your-objectstorage.com`.
 Keep the discovery directory and stage on persistent VM storage. Per-file receipts are stored
 under the inventory SHA256. Restart the same command: receipted objects are read back and
-verified without source download. An upload interrupted before its receipt is safely compared
+verified without source download. Existing release-checked receipts remain immutable and their
+recorded limitations are included in the new report. Use a fresh stage directory when recovering
+a run whose local report must be preserved; destination reports are content-addressed.
+An upload interrupted before its receipt is safely compared
 with the source on restart. Corrupt destination objects are reported, never silently overwritten.
 Unfinished multipart uploads may require operator inspection after an abrupt process kill.
 
 `dem-stage/report.json` and content-addressed destination reports list verified objects,
-failed files and missing cells. Failure detail remains explicit. Exit success means only this
-frozen inventory reconciled; it does not replace the required independent coverage review,
+failed files, missing cells, metadata warnings and release limitations. `transfer_complete` and
+exit success mean all selected bytes reconciled with no missing cells. The conservative `complete`
+field also requires no metadata or release limitations; it is not an operator completion decision.
+Assess documented limitations against the acquisition requirements. Neither flag replaces the required independent coverage review,
 representative destination raster reads or the acquisition completion report.
 Before bulk execution, coordinate VM resources with streamflow and run a bounded representative
 source/destination check. Neither tests nor these commands authorize another bucket or VM.

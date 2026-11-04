@@ -78,8 +78,8 @@ def test_transfer_restart_reconciles_content_and_reports_failures(tmp_path: Path
         assert failed["failed"][0]["name"] == source.name
 
 
-def test_metadata_retains_dated_release_and_rejects_wrong_datum(tmp_path: Path) -> None:
-    from scripts.dem_acquire import metadata
+def test_metadata_retains_dated_release_and_reports_wrong_datum(tmp_path: Path) -> None:
+    from scripts.dem_acquire import metadata, metadata_warnings
 
     path = tmp_path / "provider.xml"
     body = """<metadata><title>USGS 1 Arc Second n39w105 20260528</title><pubdate>20260528</pubdate>
@@ -90,8 +90,7 @@ def test_metadata_retains_dated_release_and_rejects_wrong_datum(tmp_path: Path) 
     assert metadata(path)["pubdate"] == "20260528"
     assert "/historical/" in metadata(path)["networkr"]
     path.write_text(body.replace("1988", "1929"))
-    with pytest.raises(ValueError, match="reference system"):
-        metadata(path)
+    assert metadata_warnings(metadata(path)) == ["Unexpected altdatum: 'North American Vertical Datum of 1929'"]
 
 
 def test_restart_after_upload_without_receipt_and_missing_source(tmp_path: Path) -> None:
@@ -191,7 +190,12 @@ def test_expected_file_failures_leave_reconciliation_report(
         server.get(source.url, body=data, headers={"ETag": source.etag})
         report = run(snapshot, tmp_path / "stage", Archive(client), requests.Session())
         assert not report["complete"]
-        assert report["failed"][0]["error"] == ("ParseError" if failure == "xml" else "S3UploadFailedError")
+        if failure == "xml":
+            assert report["transfer_complete"]
+            assert not report["failed"]
+            assert report["metadata_warnings"][source.tile][0].startswith("Metadata XML could not be parsed")
+        else:
+            assert report["failed"][0]["error"] == "S3UploadFailedError"
         assert json.loads((tmp_path / "stage/report.json").read_text()) == report
 
 
@@ -221,7 +225,7 @@ def test_release_link_checks_frozen_tiff_and_reports_legacy() -> None:
     )
 
 
-def test_old_receipt_cannot_bypass_release_check(tmp_path: Path) -> None:
+def test_old_receipt_preserved_while_metadata_limitations_are_reported(tmp_path: Path) -> None:
     import hashlib
     import json
     from dataclasses import asdict
@@ -253,7 +257,9 @@ def test_old_receipt_cannot_bypass_release_check(tmp_path: Path) -> None:
         server.get(source.url, body=data, headers={"ETag": source.etag})
         report = run(snapshot, tmp_path / "stage", Archive(client), requests.Session())
         assert not report["complete"]
-        assert report["failed"][0]["error"] == "ParseError"
+        assert report["transfer_complete"]
+        assert not report["failed"]
+        assert report["metadata_warnings"][source.tile][0].startswith("Metadata XML could not be parsed")
         assert client.get_object(Bucket="hydrologeez-daymet", Key=old_key)["Body"].read() == old
 
 
@@ -281,3 +287,75 @@ def test_legacy_release_title_keeps_product_and_tile_checks(title: str, accepted
     else:
         with pytest.raises(ValueError, match="tile/product"):
             release_identity(requests.Session(), fields, source)
+
+
+@pytest.mark.parametrize("limitation", ["datum", "resolution", "dated-link", "historical-404"])
+def test_metadata_limitations_preserve_bytes_and_restart(tmp_path: Path, limitation: str) -> None:
+    import hashlib
+    import json
+    from dataclasses import asdict
+
+    import boto3
+    import responses
+    from moto import mock_aws
+
+    from scripts.daymet_archive import Archive
+    from scripts.dem_acquire import run
+    from scripts.dem_inventory import BASE, CURRENT, Source
+
+    url = "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1/TIFF/historical/n39w105/USGS_1_n39w105_20260528.tif"
+    xml = f"""<metadata><title>USGS 1 Arc Second n39w105 20260528</title><pubdate>20260528</pubdate>
+    <networkr>{url}</networkr><horizdn>North American Datum of 1983</horizdn>
+    <altdatum>North American Vertical Datum of 1988</altdatum><altunits>meters</altunits>
+    <latres>0.00027777777778</latres><longres>0.00027777777778</longres></metadata>"""
+    if limitation == "datum":
+        xml = xml.replace("1988", "1929")
+    if limitation == "resolution":
+        xml = xml.replace("0.00027777777778", "0.00001")
+    if limitation == "dated-link":
+        xml = xml.replace("<pubdate>20260528", "<pubdate>20260101")
+    payloads = [b"native raster", xml.encode()]
+    sources = [
+        Source(
+            "n39w105", f"n39w105/USGS_1_n39w105.{suffix}", len(data), '"' + hashlib.md5(data).hexdigest() + '"', "date"
+        )
+        for suffix, data in zip(["tif", "xml"], payloads, strict=True)
+    ]
+    snapshot = tmp_path / "inventory.json"
+    snapshot.write_text(
+        json.dumps({"source_prefix": BASE + CURRENT, "missing": {}, "files": [asdict(s) for s in sources]})
+    )
+    with mock_aws(), responses.RequestsMock() as server:
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket="hydrologeez-daymet")
+        for source, data in zip(sources, payloads, strict=True):
+            server.get(source.url, body=data, headers={"ETag": source.etag})
+        server.head(
+            url,
+            status=404 if limitation == "historical-404" else 200,
+            headers={"ETag": sources[0].etag, "Content-Length": str(sources[0].size)},
+        )
+        server.assert_all_requests_are_fired = False
+        first = run(snapshot, tmp_path / "stage", Archive(client), requests.Session())
+        assert first["transfer_complete"]
+        assert first["complete"] == (limitation == "dated-link")
+        assert not first["failed"]
+        assert len(first["objects"]) == 2
+        for saved, data in zip(first["objects"], payloads, strict=True):
+            assert client.get_object(Bucket="hydrologeez-daymet", Key=saved["key"])["Body"].read() == data
+        if limitation in {"datum", "resolution"}:
+            assert first["metadata_warnings"]
+            if limitation == "datum":
+                assert first["objects"][1]["metadata"]["altdatum"].endswith("1929")
+            else:
+                assert first["objects"][1]["metadata"]["latres"] == "0.00001"
+                assert len(first["metadata_warnings"]["n39w105"]) == 2
+        elif limitation == "dated-link":
+            assert first["objects"][1]["release_identity"]["status"] == "matched"
+            assert first["objects"][1]["metadata"]["pubdate"] == "20260101"
+        else:
+            assert first["unverifiable_releases"]
+        calls = len(server.calls)
+        restarted = run(snapshot, tmp_path / "restart", Archive(client), requests.Session())
+        assert restarted == first
+        assert len(server.calls) == calls
