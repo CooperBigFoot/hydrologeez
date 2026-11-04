@@ -10,19 +10,19 @@ def test_worked_day() -> None:
     parameters = Parameters(
         np.array([0]),
         np.array([[0.0, 2.0, 0.05, 0.1, 1.0, 100.0, 1.0, 0.5]]),
-        np.array([[1.0, 12.0, 0.2, 0.1, 0.05]]),
+        np.array([[1.0, 0.0, 0.1, 0.05]]),
         np.array([2.0]),
     )
     initial = Memory(np.array([[10.0, 0.0, 50.0]]), np.array([[10.0, 20.0]]), np.zeros(1))
     result = simulate(forcing, parameters, initial, history=True)
-    assert_allclose(result.outlet, [[1.38]])
+    assert_allclose(result.outlet, [[1.21]])
     assert_allclose(result.final.zone, [[6.0, 0.6, 52.7]])
-    assert_allclose(result.final.groundwater, [[11.99, 19.95]])
-    assert_allclose(result.final.routing, [1.38])
+    assert_allclose(result.final.groundwater, [[12.33, 19.95]])
+    assert_allclose(result.final.routing, [1.21])
     assert result.history is not None
     assert_allclose(result.history.zone, [[[6.0, 0.6, 52.7]]])
     assert_allclose(result.history.zone_flux, [[[9.4, 4.7, 2.0, 6.0, 4.0, 0.0, 4.7, 0.0]]])
-    assert_allclose(result.history.basin_flux, [[[1.38, 2.76, 1.0, 0.34, 1.37, 1.05]]])
+    assert_allclose(result.history.basin_flux, [[[1.21, 2.42, 1.0, 1.37, 1.05]]])
     assert_allclose(initial.zone, [[10.0, 0.0, 50.0]])
 
 
@@ -35,7 +35,7 @@ def test_fractional_routing_restart_and_associations() -> None:
     params = Parameters(
         np.array([1, 0, 0]),
         np.tile([0.0, 2.0, 0.5, 0.0, 1.0, 100.0, 1.0, 0.5], (5, 1)),
-        np.tile([0.0, 0.0, 1.0, 1.0, 0.0], (3, 1)),
+        np.tile([0.0, 0.0, 1.0, 0.0], (3, 1)),
         np.array([2.5, 1.0, 6.5]),
     )
     initial = Memory(np.tile([0.0, 0.0, 100.0], (5, 1)), np.zeros((3, 2)), np.zeros(8))
@@ -65,7 +65,7 @@ def test_invalid_inputs_are_rejected() -> None:
 
     forcing = Forcing(np.zeros((1, 1, 3)), np.ones(1), np.array([0, 1]))
     params = Parameters(
-        np.array([0]), np.array([[0.0, 2.0, 0.5, 0.1, 1.0, 100.0, 1.0, 0.5]]), np.zeros((1, 5)), np.ones(1)
+        np.array([0]), np.array([[0.0, 2.0, 0.5, 0.1, 1.0, 100.0, 1.0, 0.5]]), np.zeros((1, 4)), np.ones(1)
     )
     initial = Memory(np.zeros((1, 3)), np.zeros((1, 2)), np.zeros(0))
     for array, column, value in [
@@ -75,6 +75,7 @@ def test_invalid_inputs_are_rejected() -> None:
         (params.zone, 5, 0.0),
         (params.zone, 7, 1.1),
         (params.groundwater, 0, -1.0),
+        (params.groundwater, 1, -0.1),
         (params.maxbas, 0, 0.9),
         (initial.zone, 1, 1.0),
     ]:
@@ -85,6 +86,9 @@ def test_invalid_inputs_are_rejected() -> None:
         array[..., column] = old
     with pytest.raises(ValueError):
         simulate(forcing, params, initial, stop=2)
+    legacy = Parameters(params.basin_index, params.zone, np.zeros((1, 5)), params.maxbas)
+    with pytest.raises(ValueError, match="groundwater parameters"):
+        simulate(forcing, legacy, initial)
 
 
 @pytest.mark.parametrize(
@@ -110,7 +114,7 @@ def test_snow_soil_boundaries(
 
     forcing = Forcing(np.array([[[rain, temperature, pet]]]), np.ones(1), np.array([0, 1]))
     params = Parameters(
-        np.array([0]), np.array([[0.0, 2.0, 0.5, 0.25, 2.0, 100.0, 2.0, 0.5]]), np.zeros((1, 5)), np.ones(1)
+        np.array([0]), np.array([[0.0, 2.0, 0.5, 0.25, 2.0, 100.0, 2.0, 0.5]]), np.zeros((1, 4)), np.ones(1)
     )
     result = simulate(forcing, params, Memory(np.array([state]), np.zeros((1, 2)), np.zeros(0)), history=True)
     assert_allclose(result.final.zone[0], expected_state)
@@ -121,9 +125,12 @@ def test_snow_soil_boundaries(
 @pytest.mark.parametrize(
     "upper, lower, response, expected",
     [
-        (1.0, 0.0, [0.0, 0.0, 1.0, 1.0, 0.0], [1.0, 1.0, 0.0, 0.5, 0.5, 0.0]),
-        (1.0, 2.0, [5.0, 0.0, 10.0, 10.0, 2.0], [3.0, 3.0, 1.0, 0.0, 0.0, 3.0]),
-        (2.0, 0.0, [0.0, 2.0, 10.0, 0.25, 0.0], [0.5, 0.5, 0.0, 0.0, 0.5, 0.0]),
+        (1.0, 0.0, [0.0, 1.0, 2.0, 0.0], [1.0, 1.0, 0.0, 1.0, 0.0]),
+        (1.0, 2.0, [5.0, 0.5, 10.0, 2.0], [3.0, 3.0, 1.0, 0.0, 3.0]),
+        (2.0, 0.0, [0.0, 0.0, 0.25, 0.0], [0.5, 0.5, 0.0, 0.5, 0.0]),
+        (4.0, 0.0, [0.0, 0.5, 0.1, 0.0], [0.8, 0.8, 0.0, 0.8, 0.0]),
+        # Search bounds are not validation limits: alpha=2 remains supported.
+        (2.0, 0.0, [0.0, 2.0, 0.1, 0.0], [0.8, 0.8, 0.0, 0.8, 0.0]),
     ],
 )
 def test_groundwater_allocation(upper: float, lower: float, response: list[float], expected: list[float]) -> None:
@@ -151,7 +158,7 @@ def test_shared_parameters_separate_memory_and_water_in_transit() -> None:
     params = Parameters(
         np.array([0, 0]),
         np.tile([0.0, 2.0, 0.5, 0.25, 2.0, 100.0, 0.5, 0.5], (14, 1)),
-        np.tile([1.0, 2.0, 2.0, 1.0, 0.5], (2, 1)),
+        np.tile([1.0, 0.5, 0.1, 0.05], (2, 1)),
         np.array([7.5, 1.0]),
     )
     initial = Memory(np.tile([4.0, 1.0, 50.0], (14, 1)), np.array([[1.0, 2.0], [1.0, 2.0]]), np.ones(7))
@@ -184,7 +191,7 @@ def test_limited_outflows_leave_restartable_nonnegative_memory() -> None:
     params = Parameters(
         np.array([0]),
         np.array([[0.0, 0.0, 0.0, 0.0, 1.0, 100.0, 1.0, 1.0]]),
-        np.array([[0.0, 0.0, 78.6066444633901, 12.812235153921911, 0.0]]),
+        np.array([[0.0, 0.5, 12.812235153921911, 0.0]]),
         np.ones(1),
     )
     initial = Memory(np.zeros((1, 3)), np.array([[76.1142090593333, 0.0]]), np.zeros(0))
@@ -198,7 +205,7 @@ def test_retained_liquid_remains_restartable_at_capacity() -> None:
 
     forcing = Forcing(np.array([[[2.0, 0.0, 0.0]]]), np.ones(1), np.array([0, 1]))
     params = Parameters(
-        np.array([0]), np.array([[0.0, 0.0, 0.0, 0.1, 1.0, 100.0, 1.0, 1.0]]), np.zeros((1, 5)), np.ones(1)
+        np.array([0]), np.array([[0.0, 0.0, 0.0, 0.1, 1.0, 100.0, 1.0, 1.0]]), np.zeros((1, 4)), np.ones(1)
     )
     initial = Memory(np.array([[1.0, 0.0, 0.0]]), np.zeros((1, 2)), np.zeros(0))
     result = simulate(forcing, params, initial)
@@ -211,9 +218,18 @@ def test_overflow_soil_remains_restartable_at_capacity() -> None:
 
     forcing = Forcing(np.array([[[2.0, 0.0, 0.0]]]), np.ones(1), np.array([0, 1]))
     params = Parameters(
-        np.array([0]), np.array([[0.0, 0.0, 0.0, 0.0, 1.0, 0.1, 1.0, 1.0]]), np.zeros((1, 5)), np.ones(1)
+        np.array([0]), np.array([[0.0, 0.0, 0.0, 0.0, 1.0, 0.1, 1.0, 1.0]]), np.zeros((1, 4)), np.ones(1)
     )
     initial = Memory(np.zeros((1, 3)), np.zeros((1, 2)), np.zeros(0))
     result = simulate(forcing, params, initial)
     assert result.final.zone[0, 2] <= 0.1
     simulate(forcing, params, result.final)
+
+
+def test_nonlinear_groundwater_worked_response() -> None:
+    from hydrologeez.hbv_light.routines.groundwater import groundwater
+
+    # Recharge 3 + upper 8 - percolation 2 = 9; 0.1 * 9**1.5 = 2.7.
+    actual = groundwater(3.0, 8.0, 4.0, 2.0, 0.5, 0.1, 0.05)
+    assert_allclose(actual, [6.3, 5.7, 3.0, 2.0, 2.7, 0.3])
+    assert_allclose(actual[0] + actual[1] + actual[2], 8.0 + 4.0 + 3.0)

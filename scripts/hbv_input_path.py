@@ -174,7 +174,7 @@ def inputs(values: Array, copies: int) -> tuple[Forcing, Parameters, Memory]:
     parameters = Parameters(
         np.tile(np.arange(basins, dtype=np.int64), copies),
         np.tile([0.0, 2.0, 0.05, 0.1, 1.0, 100.0, 1.0, 0.5], (count, 1)),
-        np.tile([1.0, 12.0, 0.2, 0.1, 0.05], (count, 1)),
+        np.tile([1.0, 0.5, 0.1, 0.05], (count, 1)),
         np.full(count, 2.5),
     )
     initial = Memory(np.tile([0.0, 0.0, 50.0], (count, 1)), np.zeros((count, 2)), np.zeros(count * 2))
@@ -303,6 +303,7 @@ def main() -> None:
                     )
         print(label, flush=True)
     sizes = {str(p.relative_to(args.output)): p.stat().st_size for p in args.output.rglob("*") if p.is_file()}
+    _, parameters, _ = inputs(canonical, 4)
     evidence = {
         "platform": platform.platform(),
         "versions": {
@@ -317,6 +318,10 @@ def main() -> None:
         "basins": ids,
         "date_window": ["1990-01-01", "2000-01-01 exclusive"],
         "parameter_copies": 4,
+        "groundwater_formulation": "nonlinear upper, linear lower; recharge then percolation then discharge",
+        "zone_parameters_TT_CFMAX_CFR_CWH_SCF_FC_BETA_LP": parameters.zone[0].tolist(),
+        "groundwater_parameters_PERC_Alpha_K1_K2": parameters.groundwater[0].tolist(),
+        "maxbas_days": float(parameters.maxbas[0]),
         "preparation_seconds": preparation,
         "construction_seconds": construction,
         "compilation_seconds": compilation,

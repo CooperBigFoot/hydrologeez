@@ -3,13 +3,15 @@
 ## Model identity and limits
 
 HBV stores water in snow, soil, and groundwater, then routes runoff to the
-outlet. The daily model below uses the standard HBV-light structure [1, §2].
+outlet. The daily model below uses the nonlinear basic response shown in the
+maintainer-supplied diagram [5], alongside the HBV-light snow, soil, and routing
+structure [1, §2].
 Snow and soil stores belong to elevation–vegetation zones; groundwater stores
 and routing serve the whole basin.
 
 The scope excludes lakes, glaciers, slope-aspect corrections, connected
-subcatchments, and alternative groundwater structures, including the nonlinear
-upper reservoir in [1, Eq. 8].
+subcatchments, and alternative groundwater structures, including the threshold
+response with $UZL$ and $K_0$.
 
 The daily rules retain the published process laws and specify timing and
 allocation where the sources leave them open. These illustrative choices affect
@@ -17,9 +19,9 @@ discharge; agreement with an HBV-light executable remains unverified.
 
 | Status | What this description uses |
 | --- | --- |
-| Published structure | Snow threshold, degree-day melt/refreezing, retention, nonlinear recharge, moisture-limited evaporation, two groundwater stores, three linear outflows, triangular routing [1, Eqs. 1–6]. |
+| Published structure | Snow threshold, degree-day melt/refreezing, retention, nonlinear recharge, moisture-limited evaporation, two groundwater stores with nonlinear upper and linear lower outflow [5; 1, Eq. 8], triangular routing [1, Eqs. 1–6]. |
 | Historical evidence | Linear elevation adjustments, daily PET input, and support for noninteger routing duration [2, Part 1, pp. 3–7]. Current defaults remain unverified. |
-| Illustrative daily choices | Rain at threshold equality; solid-snow retention basis; beginning-of-day soil moisture for recharge; soil overflow sent to groundwater; evaporation after recharge; percolation before runoff; proportional limiting of competing upper outflows; integrated fractional routing bins; explicit initial memory. |
+| Illustrative daily choices | Rain at threshold equality; solid-snow retention basis; beginning-of-day soil moisture for recharge; soil overflow sent to groundwater; evaporation after recharge; recharge then percolation then discharge; available-water limits; integrated fractional routing bins; explicit initial memory. |
 
 ## Time, inputs, parameters, and memory
 
@@ -44,20 +46,58 @@ rules; calibration ranges and software search bounds require separate choices.
 | $CFMAX$ | Degree-day melt factor | mm °C$^{-1}$ day$^{-1}$, nonnegative |
 | $CFR$ | Refreezing factor relative to melt | dimensionless, $0\leq CFR\leq1$ |
 | $CWH$ | Liquid retention per unit solid snow | dimensionless, $0\leq CWH\leq1$ |
-| $SCF$ | Snowfall correction factor (SFCF in [2]) | dimensionless, positive |
+| $SCF$ | Snowfall correction factor (SFCF in [2, 5]) | dimensionless, positive |
 | $FC$ | Maximum soil storage | mm, positive |
 | $BETA$ | Soil recharge exponent | dimensionless, positive |
 | $LP$ | Soil fraction above which evaporation is potential | dimensionless, $0\lt LP\leq1$ |
 | $PERC$ | Maximum upper-to-lower percolation rate | mm day$^{-1}$, nonnegative |
-| $UZL$ | Threshold for fast upper-store outflow | mm, nonnegative |
-| $K_0,K_1,K_2$ | Recession coefficients | day$^{-1}$, nonnegative |
+| $\alpha$ (`Alpha`) | Upper-store response exponent increment | dimensionless, nonnegative |
+| $K_1$ | Nonlinear upper-store coefficient | mm$^{-\alpha}$ day$^{-1}$, nonnegative |
+| $K_2$ | Lower-store recession coefficient | day$^{-1}$, nonnegative |
 | $B=MAXBAS$ | Base duration of triangular routing | days, $B\geq1$ |
 
 Available-water limits keep stores nonnegative, including for large recession
-coefficients. When active, they reduce outflow below the published linear demand.
+coefficients. When active, they reduce outflow below the unconstrained demand.
+For storage in mm, $K_1$ has units mm$^{-\alpha}$ day$^{-1}$; it has inverse-day
+units only when $\alpha=0$.
 $FC$ is a conceptual storage capacity whose value may differ from measured field
 capacity [2, Part 2, p. 6]. $LP$ is dimensionless as required by [1, Eq. 4];
 the historical manual labels it inconsistently.
+
+### Maintainer-supplied search ranges
+
+The user supplied `Response_routine.png` and `Parameter_ranges.txt`, identifying
+their source as an HBV-light maintainer in Jan Seibert's group [5]. The diagram separates
+the nonlinear basic version from the version using $UZL$ and $K_0$.
+The ranges below are search bounds, **not validation limits**. In particular,
+the implementation permits $\alpha\geq0$, not only $\alpha\leq1$.
+`SCF` remains the public name for the supplied `SFCF`; it is the same parameter.
+
+| Parameter | Lower search bound | Upper search bound |
+| --- | --- | --- |
+| TT | -2 | 2.5 |
+| CFMAX | 0.5 | 10 |
+| SCF (supplied SFCF) | 0.5 | 1.2 |
+| CFR | 0 | 0.1 |
+| CWH | 0 | 0.2 |
+| FC | 100 | 1000 |
+| LP | 0.3 | 1 |
+| BETA | 1 | 5 |
+| PERC | 0 | 4 |
+| Alpha | 0 | 1 |
+| K1 | 0.01 | 0.2 |
+| K2 | 0.001 | 0.1 |
+| MAXBAS | 1 | 5 |
+
+### Public arrays and memory
+
+The groundwater parameter order is `[PERC, Alpha, K1, K2]`, replacing
+`[PERC, UZL, K0, K1, K2]`. Basin history uses `[Q, G, D, q1, q2]`:
+removing `q0` shifts the zero-based indices of `q1` and `q2` from 4 and 5 to
+3 and 4. Stored arrays and downstream consumers must use the new schema.
+There is no generally equivalent automatic parameter migration from the
+threshold response. Setting `Alpha=0` recovers the former linear `K0=0` case
+with the same remaining parameters and daily order.
 
 | Component | Complete memory at start of day | Inputs | Outputs |
 | --- | --- | --- | --- |
@@ -130,6 +170,7 @@ storages, all in mm except the dimensionless fraction:
 r_n=I_n\left(\frac{M_n}{FC}\right)^{BETA},\qquad
 M^a=M_n+I_n-r_n,
 ```
+
 ```math
 o_n=\max(M^a-FC,0),\qquad R_n=r_n+o_n,\qquad M^b=M^a-o_n.
 ```
@@ -161,34 +202,31 @@ U^a=U_n+R_n,\qquad D_n=\min(PERC\,\Delta t,U^a),
 \qquad U^b=U^a-D_n,\qquad V^a=V_n+D_n.
 ```
 
-The published response has two upper outflows and one lower outflow
-[1, Eq. 5]. Define unconstrained upper demands $d_0,d_1$ in mm from the **same**
-post-percolation store, then limit them together:
+The selected basic response [5] has one nonlinear upper outflow and one linear
+lower outflow. Evaluate the upper response on the **post-percolation** store:
 
 ```math
-d_0=K_0\max(U^b-UZL,0)\Delta t,\qquad d_1=K_1U^b\Delta t,
-```
-```math
-\lambda=\begin{cases}1&d_0+d_1=0,\\ \min\{1,U^b/(d_0+d_1)\}&d_0+d_1\gt 0,\end{cases}
-\qquad q_{0,n}=\lambda d_0,\quad q_{1,n}=\lambda d_1.
+q_{1,n}=\min\{K_1(U^b)^{1+\alpha}\Delta t,U^b\}.
 ```
 
-Proportional limiting preserves the ratio of the two demands when water is
-insufficient. At $U^b=UZL$, the fast demand is zero. Lower outflow includes today's
-percolation:
+For the daily timestep, this is $Q_1=\min(K_1U^{1+\alpha},U)$ in the supplied
+diagram. At $\alpha=0$, the response is linear. Lower outflow includes today's
+percolation and retains its available-water limit:
 
 ```math
 q_{2,n}=\min(V^a,K_2V^a\Delta t),\qquad
-U_{n+1}=U^b-q_{0,n}-q_{1,n},\qquad V_{n+1}=V^a-q_{2,n},
+U_{n+1}=U^b-q_{1,n},\qquad V_{n+1}=V^a-q_{2,n},
 ```
+
 ```math
-G_n=q_{0,n}+q_{1,n}+q_{2,n}.
+G_n=q_{1,n}+q_{2,n}.
 ```
 
 The groundwater balance is
 $U_{n+1}+V_{n+1}-U_n-V_n=R_n-G_n$.
-The sources specify the maximum percolation rate and linear response laws;
-priority and allocation remain open. Reversing priority changes the hydrograph.
+Recharge, then percolation, then discharge is an explicit implementation choice,
+not a verified HBV-light executable order. The diagram specifies response laws
+but does not establish this daily order. Reversing priority changes the hydrograph.
 The bound $V\leq PERC/K_2$ depends on initial storage: a fuller lower store can
 exceed it, and $K_2=0$ makes the expression undefined.
 
@@ -211,6 +249,7 @@ dimensionless weights:
 c_j=\int_{j\Delta t}^{(j+1)\Delta t}w_B(s)\,ds,
 \quad j=0,\ldots,N-1,\qquad c_j\geq0,\quad\sum_jc_j=1,
 ```
+
 ```math
 Q_n=\sum_{j=0}^{N-1}c_jG_{n-j}.
 ```
@@ -366,8 +405,8 @@ Different daily orders can satisfy the same balance.
 Use one zone with start-of-day stores $(S,L,M,U,V)=(10,0,50,10,20)$ mm,
 an empty routing schedule, and forcing $(P,T,E)=(6,2,2)$ in mm, °C, and mm.
 Choose $TT=0$, $CFMAX=2$, $CFR=0.05$, $CWH=0.1$, $SCF=1$,
-$FC=100$, $BETA=1$, $LP=0.5$, $PERC=1$, $UZL=12$,
-$(K_0,K_1,K_2)=(0.2,0.1,0.05)$ day$^{-1}$, and $B=2$ days.
+$FC=100$, $BETA=1$, $LP=0.5$, $PERC=1$, $\alpha=0$ (the linear case),
+$K_1=0.1$ day$^{-1}$, $K_2=0.05$ day$^{-1}$, and $B=2$ days.
 
 | Operation | Calculation | Result (mm) |
 | --- | --- | --- |
@@ -376,16 +415,16 @@ $(K_0,K_1,K_2)=(0.2,0.1,0.05)$ day$^{-1}$, and $B=2$ days.
 | Soil recharge | $9.4(50/100)=4.7$; no overflow | $R=4.7$, soil before evaporation $54.7$ |
 | Evaporation | $2\min(54.7/50,1)=2$ | $A=2$, $M'=52.7$ |
 | Percolation | $\min(1,10+4.7)=1$ | $U^b=13.7$, $V^a=21$ |
-| Upper outflows | $0.2(13.7-12)=0.34$; $0.1(13.7)=1.37$ | $U'=11.99$ |
+| Upper outflow | $\min(0.1(13.7)^{1+0},13.7)=1.37$ | $U'=12.33$ |
 | Lower outflow | $0.05(21)=1.05$ | $V'=19.95$ |
-| Routing | $G=0.34+1.37+1.05=2.76$; $c_0=c_1=0.5$ | $Q=1.38$, next day's schedule $h'=1.38$ |
+| Routing | $G=1.37+1.05=2.42$; $c_0=c_1=0.5$ | $Q=1.21$, next day's schedule $h'=1.21$ |
 
 Primes in this table mean end-of-day stores. Initial water is $X_n=90$ mm;
-final water is $6+0.6+52.7+11.99+19.95+1.38=92.62$ mm.
-Thus $\Delta X=2.62=6-2-1.38$ mm. Omitting routing would wrongly report a
-1.38 mm loss. On a 100 km² basin, today's outlet mean is 1.597222 m³ s$^{-1}$.
-If the next generated runoff were zero, its outlet would still receive 1.38 mm.
-A restart must retain $h'=1.38$ to preserve that arrival. Zero generated runoff
+final water is $6+0.6+52.7+12.33+19.95+1.21=92.79$ mm.
+Thus $\Delta X=2.79=6-2-1.21$ mm. Omitting routing would wrongly report a
+1.21 mm loss. On a 100 km² basin, today's outlet mean is 1.400463 m³ s$^{-1}$.
+If the next generated runoff were zero, its outlet would still receive 1.21 mm.
+A restart must retain $h'=1.21$ to preserve that arrival. Zero generated runoff
 is a conditional routing check; groundwater may continue releasing water on a
 dry day.
 
@@ -402,15 +441,15 @@ Boundary cases:
   incoming water is recharge before evaporation. $I=0$ needs no division by $I$.
 - **Evaporation limited by water:** $M^b=1$, $FC=100$, $LP=0.5$, $E=100$
   give demand 2 but actual evaporation 1 mm and final soil zero.
-- **Competing groundwater demands:** with $U^b=1$, $UZL=0$, and
-  $K_0=K_1=1$ day$^{-1}$, demands are 1 mm each; $\lambda=0.5$ and
-  each releases 0.5 mm. If percolation already consumed the upper water,
-  both upper outflows are zero. At $U^b=UZL$, only the fast demand vanishes.
+- **Nonlinear upper response:** with $U^b=2$ mm, $\alpha=1$, and
+  $K_1=1$ mm$^{-1}$ day$^{-1}$, demand is 4 mm but outflow is capped at
+  2 mm. If percolation already consumed the upper water, upper outflow is zero.
+  With $\alpha=0$, demand reduces to $K_1U^b\Delta t$.
 - **Fractional routing:** $B=2.5$ days gives weights $(0.32,0.60,0.08)$.
   An isolated 10 mm generated pulse produces $(3.2,6.0,0.8)$ mm on the
   current and next two days. After its first day, the schedule is $(6.0,0.8)$
   and routing water is 6.8 mm. Restarting with that schedule preserves the tail.
-- **One zone or identical zones:** $\alpha=1$ recovers the single-zone case.
+- **One zone or identical zones:** $\alpha_z=1$ recovers the single-zone case.
   Splitting a zone into identical copies with fractions summing to its original
   fraction preserves basin transfers; changing zone forcing need not do so.
 
@@ -440,7 +479,7 @@ evidence for HBV-light equivalence; its precipitation multiplier is excluded her
 
 Zone snow and soil updates are independent given their own memory and inputs.
 Their area-weighted recharge feeds groundwater, followed by fixed-weight,
-finite-memory linear routing. Nonlinear recharge, thresholds, and available-water
+finite-memory linear routing. Nonlinear recharge and upper response, thresholds, and available-water
 limits couple successive days and prevent representing the full model as one
 fixed linear convolution or affine recurrence.
 
@@ -453,7 +492,7 @@ reservoirs changes the model, even if water is conserved.
 1. Seibert, J. and Vis, M. J. P. (2012). *Teaching hydrological modeling with a
    user-friendly catchment-runoff-model software package*. HESS 16, 3315–3325.
    [Article](https://doi.org/10.5194/hess-16-3315-2012), §2, pp. 3316–3317,
-   Eqs. 1–7. Primary source for the selected standard structure.
+   Eqs. 1–8. Primary source for the process laws and nonlinear response alternative.
 2. Seibert, J. (2005). *HBV light version 2, User's Manual*, November 2005.
    [Public historical manual](https://www.geo.uzh.ch/dam/jcr:c8afa73c-ac90-478e-a8c7-929eed7b1b62/HBV_manual_2005.pdf).
    Part 1 and Part 2 have separate page numbering. Historical details; current
@@ -464,3 +503,7 @@ reservoirs changes the model, even if water is conserved.
 4. UZH, [HBV-light model information](https://www.geo.uzh.ch/en/units/h2k/Services/HBV-Model.html)
    and [download information](https://www.geo.uzh.ch/en/units/h2k/Services/HBV-Model/HBV-Download.html).
    Public access conditions checked during this work.
+5. User-supplied `Response_routine.png` and `Parameter_ranges.txt`, attributed by
+   the user to an HBV-light maintainer in Jan Seibert's group. The diagram distinguishes
+   the nonlinear basic response from the UZL/K0 version; the table supplies
+   parameter search ranges. Neither verifies executable update order.
