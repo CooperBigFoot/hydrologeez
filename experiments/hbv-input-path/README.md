@@ -1,5 +1,9 @@
 # HBV input-path experiments
 
+This report and its two measurement files preserve the original UZL/K0 study.
+See the [nonlinear-response rerun](nonlinear-response.md) for the current model;
+use commit `ac7b5bc` to reproduce the historical results below.
+
 Evidence for [#122](https://github.com/CooperBigFoot/hydrologeez/issues/122) and the [published vision](../../planning/visions/2026-11-04-hbv-input-path-experiments.md). This recommends an implementation for discussion #90; it does not adopt a production API.
 
 ## Recommendation
