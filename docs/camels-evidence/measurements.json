@@ -1,0 +1,49 @@
+{
+  "python": "3.13.14",
+  "numpy": "2.5.4",
+  "numba": "0.68.1",
+  "platform": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
+  "threads": 1,
+  "metadata_open_seconds": 0.0034941660705953836,
+  "measurements": [
+    {
+      "basins": 2,
+      "days": 29,
+      "parameter_copies": 4,
+      "selection_seconds": 0.042879957938566804,
+      "forcing_materialized_bytes": 1392,
+      "simulation_seconds": [
+        0.005622583907097578,
+        0.0002657498698681593,
+        0.00021345890127122402,
+        0.000191875034943223
+      ]
+    },
+    {
+      "basins": 128,
+      "days": 3652,
+      "parameter_copies": 4,
+      "selection_seconds": 0.6779474578797817,
+      "forcing_materialized_bytes": 11218944,
+      "simulation_seconds": [
+        0.19944766582921147,
+        0.19871912500821054,
+        0.20096195815131068,
+        0.20258616586215794
+      ]
+    }
+  ],
+  "observation_rows": 8415489,
+  "published_missing": 69481,
+  "absent_over_forcing": 162575,
+  "qc": {
+    "A": 7691797,
+    "A:e": 654076,
+    "M": 69481,
+    "A:<": 135
+  },
+  "basins": 671,
+  "forcing_gaps": 0,
+  "invalid_forcing": 0,
+  "preparation_seconds": 17.066050291992724
+}
