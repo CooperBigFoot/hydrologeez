@@ -31,6 +31,11 @@ dev = [
     "types-requests>=2.33.0.20261006",
     "uv-build>=0.12.1,<0.13",
 ]
+experiments = [
+    "netcdf4>=1.7.5.1.post1",
+    "pyarrow>=26.0.1",
+    "zarr>=3.4.2",
+]
 
 [tool.ruff]
 line-length = 120

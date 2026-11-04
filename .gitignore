@@ -8,3 +8,4 @@ htmlcov/
 dist/
 .env
 .DS_Store
+.hbv-input-data/
