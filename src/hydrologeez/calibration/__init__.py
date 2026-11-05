@@ -152,7 +152,13 @@ class CandidateEvaluator:
             for column in discharge.T:
                 scores.append(
                     {
-                        period: evaluate(self.observed[self.masks[period]], column[self.masks[period]])
+                        period: evaluate(
+                            self.observed[self.masks[period]],
+                            column[self.masks[period]],
+                            dates=(self.dates[self.masks[period]] - date(1970, 1, 1).toordinal()).astype(
+                                "datetime64[D]"
+                            ),
+                        )
                         for period in periods
                     }
                 )

@@ -9,6 +9,7 @@ dependencies = [
     "numba>=0.68.1",
     "numpy>=2.5.4",
     "polars>=2.1.0",
+    "scipy>=1.18.1",
 ]
 
 [project.optional-dependencies]

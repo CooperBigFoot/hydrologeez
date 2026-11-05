@@ -717,6 +717,7 @@ dependencies = [
     { name = "numba" },
     { name = "numpy" },
     { name = "polars" },
+    { name = "scipy" },
 ]
 
 [package.optional-dependencies]
@@ -764,6 +765,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.5.4" },
     { name = "polars", specifier = ">=2.1.0" },
     { name = "scikit-learn", marker = "extra == 'cluster'", specifier = ">=1.9.1" },
+    { name = "scipy", specifier = ">=1.18.1" },
     { name = "seaborn", marker = "extra == 'cluster'", specifier = ">=0.13.2" },
     { name = "tslearn", marker = "extra == 'cluster'", git = "https://github.com/CooperBigFoot/tslearn.git?rev=2042188a3e39b728affd3da688e212e59bfb1c06" },
 ]
