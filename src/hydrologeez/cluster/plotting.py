@@ -67,6 +67,31 @@ def _profile(
     sns.despine(ax=axis)
 
 
+def render_diagnostics(
+    directory: Path,
+    scores: dict[int, float | None],
+    inertias: dict[int, float] | None = None,
+    elbow_count: int | None = None,
+) -> None:
+    """Save retained diagnostic curves; mark only a detected elbow."""
+    directory.mkdir(parents=True, exist_ok=True)
+    curves = [("cluster_count_diagnostic", "Mean silhouette", scores)]
+    if inertias is not None:
+        curves.append(("inertia_diagnostic", "Mean squared constrained-DTW distance", inertias))
+    with sns.plotting_context("paper", font_scale=1.3), sns.axes_style("white"):
+        for name, ylabel, values in curves:
+            figure = Figure(figsize=(8, 6), layout="constrained")
+            axis = figure.subplots()
+            counts = sorted(values)
+            axis.plot(counts, [np.nan if values[k] is None else values[k] for k in counts], color="black", marker="o")
+            if name == "inertia_diagnostic" and elbow_count is not None:
+                axis.axvline(elbow_count, color=_BASE_COLORS[0], linestyle="--", label=f"Detected elbow: {elbow_count}")
+                axis.legend(frameon=False)
+            axis.set(xlabel="Number of clusters", ylabel=ylabel, xticks=counts)
+            sns.despine(ax=axis)
+            _save(figure, directory, name)
+
+
 def render_figures(
     directory: Path,
     members: FloatArray,
@@ -108,13 +133,7 @@ def render_figures(
         ),
     ):
         if search:
-            figure = Figure(figsize=(8, 6), layout="constrained")
-            axis = figure.subplots()
-            counts = sorted(scores)
-            axis.plot(counts, [np.nan if scores[k] is None else scores[k] for k in counts], color="black", marker="o")
-            axis.set(xlabel="Number of clusters", ylabel="Mean silhouette", xticks=counts)
-            sns.despine(ax=axis)
-            _save(figure, directory, "cluster_count_diagnostic")
+            render_diagnostics(directory, scores)
 
         figure = Figure(figsize=(8, 6), layout="constrained")
         projection = ccrs.LambertConformal(central_longitude=-96, central_latitude=39)
