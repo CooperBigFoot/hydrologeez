@@ -1,16 +1,16 @@
-"""Named experiments and portable original-unit result bundles."""
+"""Named experiments and portable seasonal result bundles."""
 
 import csv
 import json
 from dataclasses import asdict, dataclass
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
 
-from .fit import Candidate, fit_candidates, pooled_scale
+from .fit import Candidate, fit_candidates, per_basin_scale, pooled_scale
 from .seasonal import CALENDAR_POLICY, SeasonalCycles
 
 
@@ -30,8 +30,25 @@ class Experiment:
         return self.candidates[self.selected_count].labels
 
     @property
+    def normalization(self) -> str:
+        return self.metadata.get("normalization", "pooled")
+
+    @property
+    def normalized_members(self) -> NDArray[np.float64]:
+        return (self.cycles.values - self.mean) / self.std
+
+    @property
+    def centroid_units(self) -> tuple[str, ...]:
+        return (
+            self.cycles.units
+            if self.normalization == "pooled"
+            else ("standardized (dimensionless)",) * len(self.cycles.variables)
+        )
+
+    @property
     def centroids(self) -> NDArray[np.float64]:
-        return self.candidates[self.selected_count].centroids * self.std + self.mean
+        fitted = self.candidates[self.selected_count].centroids
+        return fitted * self.std + self.mean if self.normalization == "pooled" else fitted
 
     @property
     def clusters(self) -> dict[int, list[str]]:
@@ -40,22 +57,23 @@ class Experiment:
             for k in range(self.selected_count)
         }
 
-    def plot(self, directory: Path | None = None, *, layout: str = "paired") -> None:
+    def plot(self, directory: Path | None = None, *, rows: int | None = None, columns: int | None = None) -> None:
         from .plotting import render_figures
 
         if self.coordinates is None:
             raise ValueError("Gauge coordinates are required for the map; supply basin-ordered longitude/latitude")
         render_figures(
             directory or self.directory / "figures",
-            self.cycles.values,
+            self.cycles.values if self.normalization == "pooled" else self.normalized_members,
             self.centroids,
             self.labels,
             self.cycles.variables,
-            self.cycles.units,
+            self.centroid_units,
             self.coordinates,
             {k: fit.silhouette for k, fit in self.candidates.items()},
             self.metadata["mode"] == "search",
-            layout=layout,
+            rows=rows,
+            columns=columns,
         )
 
 
@@ -72,7 +90,9 @@ def run_experiment(
     tolerance: float = 1e-6,
     coordinates: NDArray[np.float64] | None = None,
     figures: bool = True,
-    layout: str = "paired",
+    normalization: Literal["pooled", "per_basin"] = "pooled",
+    rows: int | None = None,
+    columns: int | None = None,
 ) -> Experiment:
     """Fit one count or an explicit search. Coordinates never enter the distance.
 
@@ -86,8 +106,8 @@ def run_experiment(
         raise FileExistsError(directory)
     if (k is None) == (candidates is None):
         raise ValueError("Specify exactly one of k or candidates")
-    if layout not in ("paired", "separate"):
-        raise ValueError("layout must be paired or separate")
+    if normalization not in ("pooled", "per_basin"):
+        raise ValueError("normalization must be pooled or per_basin")
     values = cycles.values
     if (
         values.shape != (len(cycles.ids), 52, len(cycles.variables))
@@ -104,7 +124,7 @@ def run_experiment(
         raise ValueError("Coordinates must be finite basin-ordered longitude/latitude pairs")
     if figures and coordinates is None:
         raise ValueError("Coordinates required for figures; set figures=False for numerical outputs only")
-    scaled, mean, std = pooled_scale(values)
+    scaled, mean, std = pooled_scale(values) if normalization == "pooled" else per_basin_scale(values)
     counts = (k,) if k is not None else tuple(sorted(candidates or ()))
     fitted = fit_candidates(scaled, counts, seed=seed, n_init=n_init, max_iter=max_iter, tolerance=tolerance, radius=2)
     eligible = [count for count in counts if fitted[count].silhouette is not None]
@@ -112,7 +132,9 @@ def run_experiment(
         raise ValueError("Search requires at least one defined silhouette (2 <= k < basin count)")
     selected = k if k is not None else max(eligible, key=lambda count: (fitted[count].silhouette, -count))
     metadata: dict[str, Any] = {
-        "format": 1,
+        "format": 2,
+        "normalization": normalization,
+        "stored_centroids": "standardized",
         "mode": "fixed" if k is not None else "search",
         "selected_count": selected,
         "counts": list(counts),
@@ -136,7 +158,7 @@ def run_experiment(
         "distance": "dependent multivariate DTW; sqrt summed squared Euclidean local costs",
         "sakoe_chiba_radius": 2,
         "boundary": "anchored endpoints; no wrapping",
-        "channel_weights": "equal after pooled scaling",
+        "channel_weights": "equal after scaling",
         "barycenter": {
             "method": "tslearn Petitjean DBA",
             "max_iter": 30,
@@ -158,11 +180,11 @@ def run_experiment(
         writer.writerow(("basin_id", "cluster"))
         writer.writerows(zip(cycles.ids, result.labels, strict=True))
     (directory / "clusters.json").write_text(json.dumps(result.clusters, indent=2) + "\n")
-    arrays = {"members": values, "centroids": result.centroids, "labels": result.labels}
+    arrays = {"members": values, "centroids": fitted[selected].centroids, "labels": result.labels}
     if coordinates is not None:
         arrays["coordinates"] = coordinates
     for count, fit in fitted.items():
-        arrays[f"centroids_{count}"] = fit.centroids * std + mean
+        arrays[f"centroids_{count}"] = fit.centroids
         arrays[f"labels_{count}"] = fit.labels
     np.savez_compressed(directory / "seasonal_cycles.npz", allow_pickle=False, **arrays)
     with (directory / "diagnostics.csv").open("w", newline="") as stream:
@@ -182,14 +204,14 @@ def run_experiment(
             )
     (directory / "run.json").write_text(json.dumps(metadata, indent=2, allow_nan=False) + "\n")
     if figures:
-        result.plot(layout=layout)
+        result.plot(rows=rows, columns=columns)
     return result
 
 
 def load_experiment(directory: Path, *, count: int | None = None) -> Experiment:
     """Reload or select any previously evaluated count without refitting."""
     metadata = json.loads((directory / "run.json").read_text())
-    if metadata["format"] != 1:
+    if metadata["format"] not in (1, 2):
         raise ValueError("Unsupported experiment format")
     selected = metadata["selected_count"] if count is None else count
     if selected not in metadata["counts"]:
@@ -211,7 +233,9 @@ def load_experiment(directory: Path, *, count: int | None = None) -> Experiment:
             fits[candidate] = Candidate(
                 candidate,
                 arrays[f"labels_{candidate}"],
-                (arrays[f"centroids_{candidate}"] - mean) / std,
+                (arrays[f"centroids_{candidate}"] - mean) / std
+                if metadata["format"] == 1
+                else arrays[f"centroids_{candidate}"],
                 details["silhouette"],
                 details["inertia"],
                 tuple(details["history"]),

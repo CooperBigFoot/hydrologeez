@@ -20,6 +20,13 @@ def pooled_scale(values: Array) -> tuple[Array, Array, Array]:
     return (values - mean) / std, mean, std
 
 
+def per_basin_scale(values: Array) -> tuple[Array, Array, Array]:
+    """Standardize each basin/channel over its seasonal steps."""
+    mean = values.mean(axis=1, keepdims=True)
+    std = values.std(axis=1, keepdims=True)
+    return (values - mean) / std, mean, std
+
+
 def distances(values: Array, centers: Array, *, radius: int = 2) -> Array:
     return np.asarray(cdist_dtw(values, centers, global_constraint="sakoe_chiba", sakoe_chiba_radius=radius, n_jobs=1))
 
