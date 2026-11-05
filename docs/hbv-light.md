@@ -2,6 +2,8 @@
 
 For saving selected simulation histories and resuming sweeps, see [HBV output storage](hbv-output.md).
 
+For parameter fitting and retained ensembles, see [HBV calibration](calibration.md).
+
 ## Model identity and limits
 
 HBV stores water in snow, soil, and groundwater, then routes runoff to the
