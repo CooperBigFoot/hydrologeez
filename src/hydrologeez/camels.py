@@ -1,21 +1,88 @@
-"""Local CAMELS-US daily inputs; basin-major NumPy storage and HBV selections."""
+"""Local CAMELS-US daily inputs, static attributes, and reusable selections."""
 
 import csv
 import io
 import json
 import zipfile
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import date
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 from numpy.typing import NDArray
 
 from hydrologeez.hbv_light import Forcing
 from hydrologeez.pet import oudin
 
 Array = NDArray[np.float64]
+
+
+def prepare_attributes(raw: Path, output: Path) -> None:
+    """Prepare seven CAMELS-US static tables without daily inputs or network access.
+
+    Write typed columns and source metadata to JSON in a new directory.
+    Source NA is missing; categorical whitespace and string codes are retained.
+    """
+    metadata = json.loads(files("hydrologeez").joinpath("camels_attributes.json").read_text())
+    fields: dict[str, dict[str, str]] = metadata["fields"]
+    columns: dict[str, list[str | float | None]] = {}
+    ids: list[str] | None = None
+    for name in ("topo", "clim", "soil", "vege", "geol", "hydro", "name"):
+        with (raw / f"camels_{name}.txt").open(newline="") as source:
+            reader = csv.DictReader(source, delimiter=";")
+            rows = list(reader)
+            names = reader.fieldnames
+        if not names or "gauge_id" not in names or len(set(names)) != len(names):
+            raise ValueError("Attribute tables need unique fields and gauge_id")
+        current = sorted(row["gauge_id"] for row in rows)
+        if not current or not all(current) or len(set(current)) != len(current) or (ids is not None and current != ids):
+            raise ValueError("Attribute tables must agree on unique gauge identities")
+        ids = current
+        rows.sort(key=lambda row: row["gauge_id"])
+        for field in names:
+            if field == "gauge_id":
+                continue
+            if field in columns or field not in fields or fields[field]["source_file"] != f"camels_{name}.txt":
+                raise ValueError(f"Unexpected or duplicate CAMELS attribute: {field}")
+            columns[field] = [
+                None if row[field] == "NA" else row[field] if fields[field]["dtype"] == "string" else float(row[field])
+                for row in rows
+            ]
+    metadata["fields"] = {field: fields[field] for field in ("gauge_id", *columns)}
+    payload = {"format": 1, "ids": ids, "columns": columns, "metadata": metadata}
+    # Validate serializability before creating the completion marker.
+    text = json.dumps(payload, ensure_ascii=False, allow_nan=False, indent=2) + "\n"
+    output.mkdir(parents=True, exist_ok=False)
+    (output / "attributes.json").write_text(text)
+
+
+def read_attributes(directory: Path, ids: Sequence[str] | None = None) -> pd.DataFrame:
+    """Read a reusable labeled table, optionally in caller basin order.
+
+    Rows are string gauge IDs; columns retain source names. DataFrame.attrs
+    carries field descriptions, units, provenance and source missing semantics.
+    This reads only attributes.json, never raw tables or daily records.
+    """
+    payload = json.loads((directory / "attributes.json").read_text())
+    if payload["format"] != 1:
+        raise ValueError("Unsupported CAMELS attributes format")
+    selected = payload["ids"] if ids is None else list(ids)
+    if not selected or len(set(selected)) != len(selected) or not set(selected) <= set(payload["ids"]):
+        raise ValueError("Select unique nonempty known CAMELS basins")
+    metadata = payload["metadata"]
+    table = pd.DataFrame(
+        {
+            field: pd.array(values, dtype=metadata["fields"][field]["dtype"])
+            for field, values in payload["columns"].items()
+        },
+        index=pd.Index(payload["ids"], name="gauge_id", dtype="string"),
+    )
+    table.attrs = metadata
+    return table.loc[selected].copy()
 
 
 def prepare_forcing(rows: Array, latitude: float) -> tuple[NDArray[np.int64], Array]:

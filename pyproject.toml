@@ -5,7 +5,11 @@ description = "Bucket-type and hybrid hydrological models for large-sample hydro
 requires-python = ">=3.13"
 license = "MIT"
 license-files = ["LICENSE"]
-dependencies = ["numba>=0.68.1", "numpy>=2.5.4"]
+dependencies = [
+    "numba>=0.68.1",
+    "numpy>=2.5.4",
+    "pandas>=2.3",
+]
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13"]

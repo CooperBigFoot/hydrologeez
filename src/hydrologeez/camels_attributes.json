@@ -1,0 +1,608 @@
+{
+  "source": "https://zenodo.org/records/15529996",
+  "documentation": "camels_attributes_v2.0.xlsx",
+  "citation": "Addor et al. (2017), https://doi.org/10.5194/hess-2017-169",
+  "missing_value": "Source NA becomes null in storage and pandas NA in memory; no imputation.",
+  "fields": {
+    "gauge_id": {
+      "documented_name": "gauge_id",
+      "description": "catchment identifier (8-digit USGS hydrologic unit code)",
+      "unit": "-",
+      "data_source": "N15 - USGS data",
+      "references": "",
+      "section": "camels_name - Name",
+      "source_file": "camels_name.txt",
+      "dtype": "string"
+    },
+    "huc_02": {
+      "documented_name": "huc_02",
+      "description": "region (2-digit USGS hydrologic unit code)",
+      "unit": "-",
+      "data_source": "N15 - USGS data",
+      "references": "",
+      "section": "camels_name - Name",
+      "source_file": "camels_name.txt",
+      "dtype": "string"
+    },
+    "gauge_name": {
+      "documented_name": "gauge_name",
+      "description": "gauge name, followed by the state",
+      "unit": "-",
+      "data_source": "N15 - USGS data",
+      "references": "",
+      "section": "camels_name - Name",
+      "source_file": "camels_name.txt",
+      "dtype": "string"
+    },
+    "q_mean": {
+      "documented_name": "q_mean",
+      "description": "mean daily discharge",
+      "unit": "mm/day",
+      "data_source": "N15 - USGS data*",
+      "references": "",
+      "section": "camels_hydro - Hydrological signatures - *: Period 1989/10/01 to 2009/09/30 ",
+      "source_file": "camels_hydro.txt",
+      "dtype": "Float64"
+    },
+    "runoff_ratio": {
+      "documented_name": "runoff_ratio",
+      "description": "runoff ratio (ratio of mean daily discharge to mean daily precipitation)",
+      "unit": "-",
+      "data_source": "N15 - USGS data*",
+      "references": "Eq. 2 in Sawicz et al. (2011)",
+      "section": "camels_hydro - Hydrological signatures - *: Period 1989/10/01 to 2009/09/30 ",
+      "source_file": "camels_hydro.txt",
+      "dtype": "Float64"
+    },
+    "slope_fdc": {
+      "documented_name": "slope_fdc",
+      "description": "slope of the flow duration curve (between the log-transformed 33rd and 66th streamflow percentiles)",
+      "unit": "",
+      "data_source": "N15 - USGS data*",
+      "references": "Eq. 3 in Sawicz et al. (2011)",
+      "section": "camels_hydro - Hydrological signatures - *: Period 1989/10/01 to 2009/09/30 ",
+      "source_file": "camels_hydro.txt",
+      "dtype": "Float64"
+    },
+    "baseflow_index": {
+      "documented_name": "baseflow_index",
+      "description": "baseflow index (ratio of mean daily baseflow to mean daily discharge, hydrograph separation performed using Ladson et al. [2013] digital filter)",
+      "unit": "-",
+      "data_source": "N15 - USGS data*",
+      "references": "Ladson et al. (2013)",
+      "section": "camels_hydro - Hydrological signatures - *: Period 1989/10/01 to 2009/09/30 ",
+      "source_file": "camels_hydro.txt",
+      "dtype": "Float64"
+    },
+    "stream_elas": {
+      "documented_name": "stream_elas",
+      "description": "streamflow precipitation elasticity (sensitivity of streamflow to changes in precipitation at the annual time scale)",
+      "unit": "-",
+      "data_source": "N15 - USGS data*",
+      "references": "Eq. 7 in Sankarasubramanian et al. (2001), the last element being P/Q not Q/P",
+      "section": "camels_hydro - Hydrological signatures - *: Period 1989/10/01 to 2009/09/30 ",
+      "source_file": "camels_hydro.txt",
+      "dtype": "Float64"
+    },
+    "q5": {
+      "documented_name": "Q5",
+      "description": "5% flow quantile (flow flow)",
+      "unit": "mm/day",
+      "data_source": "N15 - USGS data*",
+      "references": "",
+      "section": "camels_hydro - Hydrological signatures - *: Period 1989/10/01 to 2009/09/30 ",
+      "source_file": "camels_hydro.txt",
+      "dtype": "Float64"
+    },
+    "q95": {
+      "documented_name": "Q95",
+      "description": "95% flow quantile (high flow)",
+      "unit": "mm/day",
+      "data_source": "N15 - USGS data*",
+      "references": "",
+      "section": "camels_hydro - Hydrological signatures - *: Period 1989/10/01 to 2009/09/30 ",
+      "source_file": "camels_hydro.txt",
+      "dtype": "Float64"
+    },
+    "high_q_freq": {
+      "documented_name": "high_q_freq",
+      "description": "frequency of high-flow days ( > 9 times the median daily flow)",
+      "unit": "days/year",
+      "data_source": "N15 - USGS data*",
+      "references": "Clausen and Biggs (2000), Table 2 in Westerberg and McMillan (2015)",
+      "section": "camels_hydro - Hydrological signatures - *: Period 1989/10/01 to 2009/09/30 ",
+      "source_file": "camels_hydro.txt",
+      "dtype": "Float64"
+    },
+    "high_q_dur": {
+      "documented_name": "high_q_dur",
+      "description": "average duration of high-flow events (number of consecutive days > 9 times the median daily flow)",
+      "unit": "days",
+      "data_source": "N15 - USGS data*",
+      "references": "Clausen and Biggs (2000), Table 2 in Westerberg and McMillan (2015)",
+      "section": "camels_hydro - Hydrological signatures - *: Period 1989/10/01 to 2009/09/30 ",
+      "source_file": "camels_hydro.txt",
+      "dtype": "Float64"
+    },
+    "low_q_freq": {
+      "documented_name": "low_q_freq",
+      "description": "frequency of low-flow days ( < 0.2 times the mean daily flow)",
+      "unit": "days/year",
+      "data_source": "N15 - USGS data*",
+      "references": "Olden and Poff (2003), Table 2 in Westerberg and McMillan (2015)",
+      "section": "camels_hydro - Hydrological signatures - *: Period 1989/10/01 to 2009/09/30 ",
+      "source_file": "camels_hydro.txt",
+      "dtype": "Float64"
+    },
+    "low_q_dur": {
+      "documented_name": "low_q_dur",
+      "description": "average duration of low-flow events (number of consecutive days < 0.2 times the mean daily flow)",
+      "unit": "days",
+      "data_source": "N15 - USGS data*",
+      "references": "Olden and Poff (2003), Table 2 in Westerberg and McMillan (2015)",
+      "section": "camels_hydro - Hydrological signatures - *: Period 1989/10/01 to 2009/09/30 ",
+      "source_file": "camels_hydro.txt",
+      "dtype": "Float64"
+    },
+    "zero_q_freq": {
+      "documented_name": "zero_q_freq",
+      "description": "frequency of days with Q = 0 mm/day",
+      "unit": "%",
+      "data_source": "N15 - USGS data*",
+      "references": "",
+      "section": "camels_hydro - Hydrological signatures - *: Period 1989/10/01 to 2009/09/30 ",
+      "source_file": "camels_hydro.txt",
+      "dtype": "Float64"
+    },
+    "hfd_mean": {
+      "documented_name": "hfd_mean",
+      "description": "mean half flow date (date on which the cumulative discharge since October 1st reaches half of the annual discharge)",
+      "unit": "day of year",
+      "data_source": "N15 - USGS data*",
+      "references": "Court (1962)",
+      "section": "camels_hydro - Hydrological signatures - *: Period 1989/10/01 to 2009/09/30 ",
+      "source_file": "camels_hydro.txt",
+      "dtype": "Float64"
+    },
+    "soil_depth_pelletier": {
+      "documented_name": "soil_depth_pelletier",
+      "description": "depth to bedrock (maximum 50m)",
+      "unit": "m",
+      "data_source": "Pelletier et al. (2016)",
+      "references": "",
+      "section": "camels_soil - Soil characteristics - *: Only covers the top 1.5 m ",
+      "source_file": "camels_soil.txt",
+      "dtype": "Float64"
+    },
+    "soil_depth_statsgo": {
+      "documented_name": "soil_depth_statgso",
+      "description": "soil depth (maximum 1.5m, layers marked as water and bedrock were excluded)",
+      "unit": "m",
+      "data_source": "Miller and White (1998) - STATSGO*",
+      "references": "",
+      "section": "camels_soil - Soil characteristics - *: Only covers the top 1.5 m ",
+      "source_file": "camels_soil.txt",
+      "dtype": "Float64"
+    },
+    "soil_porosity": {
+      "documented_name": "soil_porosity",
+      "description": "volumetric porosity (saturated volumetric water content estimated using a multiple linear regression based on sand and clay fraction for the layers marked as USDA soil texture class and a default value [0.9] for layers marked as organic material, layers marked as water, bedrock and \"other\" were excluded)",
+      "unit": "-",
+      "data_source": "Miller and White (1998) - STATSGO*",
+      "references": "Table 4 in Cosby et al. (1984), Lawrence and Slater (2008)",
+      "section": "camels_soil - Soil characteristics - *: Only covers the top 1.5 m ",
+      "source_file": "camels_soil.txt",
+      "dtype": "Float64"
+    },
+    "soil_conductivity": {
+      "documented_name": "soil_conductivity",
+      "description": "saturated hydraulic conductivity (estimated using a multiple linear regression based on sand and clay fraction for the layers marked as USDA soil texture class and a default value [36cm/hr] for layers marked as organic material, layers marked as water, bedrock and \"other\" were excluded)",
+      "unit": "cm/hr",
+      "data_source": "Miller and White (1998) - STATSGO*",
+      "references": "Table 4 in Cosby et al. (1984), Lawrence and Slater (2008)",
+      "section": "camels_soil - Soil characteristics - *: Only covers the top 1.5 m ",
+      "source_file": "camels_soil.txt",
+      "dtype": "Float64"
+    },
+    "max_water_content": {
+      "documented_name": "max_water_content",
+      "description": "maximum water content (combination of porosity and soil_depth_statgso, layers marked as water, bedrock and \"other\" were excluded)",
+      "unit": "m",
+      "data_source": "Miller and White (1998) - STATSGO*",
+      "references": "",
+      "section": "camels_soil - Soil characteristics - *: Only covers the top 1.5 m ",
+      "source_file": "camels_soil.txt",
+      "dtype": "Float64"
+    },
+    "sand_frac": {
+      "documented_name": "sand_frac",
+      "description": "sand fraction (of the soil material smaller than 2 mm, layers marked as oragnic material, water, bedrock and \"other\" were excluded)",
+      "unit": "%",
+      "data_source": "Miller and White (1998) - STATSGO*",
+      "references": "",
+      "section": "camels_soil - Soil characteristics - *: Only covers the top 1.5 m ",
+      "source_file": "camels_soil.txt",
+      "dtype": "Float64"
+    },
+    "silt_frac": {
+      "documented_name": "silt_frac",
+      "description": "silt fraction (of the soil material smaller than 2 mm, layers marked as oragnic material, water, bedrock and \"other\" were excluded)",
+      "unit": "%",
+      "data_source": "Miller and White (1998) - STATSGO*",
+      "references": "",
+      "section": "camels_soil - Soil characteristics - *: Only covers the top 1.5 m ",
+      "source_file": "camels_soil.txt",
+      "dtype": "Float64"
+    },
+    "clay_frac": {
+      "documented_name": "clay_frac",
+      "description": "clay fraction (of the soil material smaller than 2 mm, layers marked as oragnic material, water, bedrock and \"other\" were excluded)",
+      "unit": "%",
+      "data_source": "Miller and White (1998) - STATSGO*",
+      "references": "",
+      "section": "camels_soil - Soil characteristics - *: Only covers the top 1.5 m ",
+      "source_file": "camels_soil.txt",
+      "dtype": "Float64"
+    },
+    "water_frac": {
+      "documented_name": "water_frac",
+      "description": "fraction of the top 1.5m marked as water (class 14 )",
+      "unit": "%",
+      "data_source": "Miller and White (1998) - STATSGO*",
+      "references": "",
+      "section": "camels_soil - Soil characteristics - *: Only covers the top 1.5 m ",
+      "source_file": "camels_soil.txt",
+      "dtype": "Float64"
+    },
+    "organic_frac": {
+      "documented_name": "organic_frac",
+      "description": "fraction of soil_depth_statsgo marked as organic material (class 13)",
+      "unit": "%",
+      "data_source": "Miller and White (1998) - STATSGO*",
+      "references": "",
+      "section": "camels_soil - Soil characteristics - *: Only covers the top 1.5 m ",
+      "source_file": "camels_soil.txt",
+      "dtype": "Float64"
+    },
+    "other_frac": {
+      "documented_name": "other_frac",
+      "description": "fraction of soil_depth_statsgo marked as other (class 16)",
+      "unit": "%",
+      "data_source": "Miller and White (1998) - STATSGO*",
+      "references": "",
+      "section": "camels_soil - Soil characteristics - *: Only covers the top 1.5 m ",
+      "source_file": "camels_soil.txt",
+      "dtype": "Float64"
+    },
+    "p_mean": {
+      "documented_name": "p_mean",
+      "description": "mean daily precipitation",
+      "unit": "mm/day",
+      "data_source": "N15 - Daymet*",
+      "references": "",
+      "section": "camels_clim - Climate indices - *: Computed over the period 1989/10/01 to 2009/09/30",
+      "source_file": "camels_clim.txt",
+      "dtype": "Float64"
+    },
+    "pet_mean": {
+      "documented_name": "pet_mean",
+      "description": "mean daily PET [estimated by N15 using Priestley-Taylor formulation calibrated for each catchment]",
+      "unit": "mm/day",
+      "data_source": "N15 - Daymet*",
+      "references": "",
+      "section": "camels_clim - Climate indices - *: Computed over the period 1989/10/01 to 2009/09/30",
+      "source_file": "camels_clim.txt",
+      "dtype": "Float64"
+    },
+    "p_seasonality": {
+      "documented_name": "p_seasonality",
+      "description": "seasonality and timing of precipitation (estimated using sine curves to represent the annual temperature and preciptiation cycles, positive [negative] values indicate that precipitation peaks in summer [winter], values close to 0 indicate uniform precipitation throughout the year)",
+      "unit": "-",
+      "data_source": "N15 - Daymet*",
+      "references": "Eq. 14 in Woods et al. (2009)",
+      "section": "camels_clim - Climate indices - *: Computed over the period 1989/10/01 to 2009/09/30",
+      "source_file": "camels_clim.txt",
+      "dtype": "Float64"
+    },
+    "frac_snow": {
+      "documented_name": "frac_snow_daily",
+      "description": "fraction of precipitation falling as snow (i.e., on days colder than 0°C)",
+      "unit": "-",
+      "data_source": "N15 - Daymet*",
+      "references": "",
+      "section": "camels_clim - Climate indices - *: Computed over the period 1989/10/01 to 2009/09/30",
+      "source_file": "camels_clim.txt",
+      "dtype": "Float64"
+    },
+    "aridity": {
+      "documented_name": "aridity",
+      "description": "aridity (PET/P, ratio of mean PET [estimated by N15 using Priestley-Taylor formulation calibrated for each catchment] to mean precipitation)",
+      "unit": "-",
+      "data_source": "N15 - Daymet*",
+      "references": "",
+      "section": "camels_clim - Climate indices - *: Computed over the period 1989/10/01 to 2009/09/30",
+      "source_file": "camels_clim.txt",
+      "dtype": "Float64"
+    },
+    "high_prec_freq": {
+      "documented_name": "high_prec_freq",
+      "description": "frequency of high precipitation days ( >= 5 times mean daily precipitation)",
+      "unit": "days/year",
+      "data_source": "N15 - Daymet*",
+      "references": "",
+      "section": "camels_clim - Climate indices - *: Computed over the period 1989/10/01 to 2009/09/30",
+      "source_file": "camels_clim.txt",
+      "dtype": "Float64"
+    },
+    "high_prec_dur": {
+      "documented_name": "high_prec_dur",
+      "description": "average duration of high precipitation events (number of consecutive days >= 5 times mean daily precipitation)",
+      "unit": "days",
+      "data_source": "N15 - Daymet*",
+      "references": "",
+      "section": "camels_clim - Climate indices - *: Computed over the period 1989/10/01 to 2009/09/30",
+      "source_file": "camels_clim.txt",
+      "dtype": "Float64"
+    },
+    "high_prec_timing": {
+      "documented_name": "high_prec_timing",
+      "description": "season during which most high precipitation days ( >= 5 times mean daily precip.) occur",
+      "unit": "season",
+      "data_source": "N15 - Daymet*",
+      "references": "",
+      "section": "camels_clim - Climate indices - *: Computed over the period 1989/10/01 to 2009/09/30",
+      "source_file": "camels_clim.txt",
+      "dtype": "string"
+    },
+    "low_prec_freq": {
+      "documented_name": "low_prec_freq",
+      "description": "frequency of dry days ( <1 mm/day)",
+      "unit": "days/year",
+      "data_source": "N15 - Daymet*",
+      "references": "",
+      "section": "camels_clim - Climate indices - *: Computed over the period 1989/10/01 to 2009/09/30",
+      "source_file": "camels_clim.txt",
+      "dtype": "Float64"
+    },
+    "low_prec_dur": {
+      "documented_name": "low_prec_dur",
+      "description": "average duration of dry periods (number of consecutive days <1 mm/day)",
+      "unit": "days",
+      "data_source": "N15 - Daymet*",
+      "references": "",
+      "section": "camels_clim - Climate indices - *: Computed over the period 1989/10/01 to 2009/09/30",
+      "source_file": "camels_clim.txt",
+      "dtype": "Float64"
+    },
+    "low_prec_timing": {
+      "documented_name": "low_prec_timing",
+      "description": "season during which most dry days ( <1 mm/day) occur",
+      "unit": "season",
+      "data_source": "N15 - Daymet*",
+      "references": "",
+      "section": "camels_clim - Climate indices - *: Computed over the period 1989/10/01 to 2009/09/30",
+      "source_file": "camels_clim.txt",
+      "dtype": "string"
+    },
+    "frac_forest": {
+      "documented_name": "forest_frac",
+      "description": "forest fraction",
+      "unit": "-",
+      "data_source": "N15 - USGS data",
+      "references": "",
+      "section": "camels_vege - Land cover characteristics - *: Period 2002 to 2014",
+      "source_file": "camels_vege.txt",
+      "dtype": "Float64"
+    },
+    "lai_max": {
+      "documented_name": "lai_max",
+      "description": "maximum monthly mean of the leaf area index (based on 12 monthly means)",
+      "unit": "-",
+      "data_source": "MODIS*",
+      "references": "",
+      "section": "camels_vege - Land cover characteristics - *: Period 2002 to 2014",
+      "source_file": "camels_vege.txt",
+      "dtype": "Float64"
+    },
+    "lai_diff": {
+      "documented_name": "lai_diff",
+      "description": "difference between the maximum and mimumum monthly mean of the leaf area index (based on 12 monthly means)",
+      "unit": "-",
+      "data_source": "MODIS*",
+      "references": "",
+      "section": "camels_vege - Land cover characteristics - *: Period 2002 to 2014",
+      "source_file": "camels_vege.txt",
+      "dtype": "Float64"
+    },
+    "gvf_max": {
+      "documented_name": "gvf_max",
+      "description": "maximum monthly mean of the green vegetation fraction (based on 12 monthly means)",
+      "unit": "-",
+      "data_source": "MODIS*",
+      "references": "",
+      "section": "camels_vege - Land cover characteristics - *: Period 2002 to 2014",
+      "source_file": "camels_vege.txt",
+      "dtype": "Float64"
+    },
+    "gvf_diff": {
+      "documented_name": "gvf_diff",
+      "description": "difference between the maximum and mimumum monthly mean of the green vegetation fraction (based on 12 monthly means)",
+      "unit": "-",
+      "data_source": "MODIS*",
+      "references": "",
+      "section": "camels_vege - Land cover characteristics - *: Period 2002 to 2014",
+      "source_file": "camels_vege.txt",
+      "dtype": "Float64"
+    },
+    "dom_land_cover_frac": {
+      "documented_name": "dom_land_cover_frac",
+      "description": "fraction of the catchment area associated with the dominant land cover",
+      "unit": "-",
+      "data_source": "MODIS*",
+      "references": "",
+      "section": "camels_vege - Land cover characteristics - *: Period 2002 to 2014",
+      "source_file": "camels_vege.txt",
+      "dtype": "Float64"
+    },
+    "dom_land_cover": {
+      "documented_name": "dom_land_cover",
+      "description": "dominant land cover type (Noah-modified 20-category IGBP-MODIS land cover)",
+      "unit": "-",
+      "data_source": "MODIS*",
+      "references": "",
+      "section": "camels_vege - Land cover characteristics - *: Period 2002 to 2014",
+      "source_file": "camels_vege.txt",
+      "dtype": "string"
+    },
+    "root_depth_50": {
+      "documented_name": "root_depth_XX",
+      "description": "root depth (percentiles XX = 50 and 99% extracted from a root depth distribution based on IGBP land cover)",
+      "unit": "m",
+      "data_source": "MODIS*",
+      "references": "Eq. 2 and Table 2 in Zeng (2001)",
+      "section": "camels_vege - Land cover characteristics - *: Period 2002 to 2014",
+      "source_file": "camels_vege.txt",
+      "dtype": "Float64"
+    },
+    "root_depth_99": {
+      "documented_name": "root_depth_XX",
+      "description": "root depth (percentiles XX = 50 and 99% extracted from a root depth distribution based on IGBP land cover)",
+      "unit": "m",
+      "data_source": "MODIS*",
+      "references": "Eq. 2 and Table 2 in Zeng (2001)",
+      "section": "camels_vege - Land cover characteristics - *: Period 2002 to 2014",
+      "source_file": "camels_vege.txt",
+      "dtype": "Float64"
+    },
+    "gauge_lat": {
+      "documented_name": "gauge_lat",
+      "description": "gauge latitude ",
+      "unit": "° north",
+      "data_source": "N15 - USGS data",
+      "references": "",
+      "section": "camels_topo - Topography and location",
+      "source_file": "camels_topo.txt",
+      "dtype": "Float64"
+    },
+    "gauge_lon": {
+      "documented_name": "gauge_lon",
+      "description": "gauge longitude",
+      "unit": "° east",
+      "data_source": "N15 - USGS data",
+      "references": "",
+      "section": "camels_topo - Topography and location",
+      "source_file": "camels_topo.txt",
+      "dtype": "Float64"
+    },
+    "elev_mean": {
+      "documented_name": "elev_mean",
+      "description": "catchment mean elevation",
+      "unit": "meter above sea level",
+      "data_source": "N15 - USGS data",
+      "references": "",
+      "section": "camels_topo - Topography and location",
+      "source_file": "camels_topo.txt",
+      "dtype": "Float64"
+    },
+    "slope_mean": {
+      "documented_name": "slope_mean",
+      "description": "catchment mean slope",
+      "unit": "m/km",
+      "data_source": "N15 - USGS data",
+      "references": "",
+      "section": "camels_topo - Topography and location",
+      "source_file": "camels_topo.txt",
+      "dtype": "Float64"
+    },
+    "area_gages2": {
+      "documented_name": "area_gages2",
+      "description": "catchment area (GAGESII estimate)",
+      "unit": "km2",
+      "data_source": "N15 - USGS data",
+      "references": "Falcone (2011) ",
+      "section": "camels_topo - Topography and location",
+      "source_file": "camels_topo.txt",
+      "dtype": "Float64"
+    },
+    "area_geospa_fabric": {
+      "documented_name": "area_geospa_fabric",
+      "description": "catchment area (Geospatial Fabric estimate)",
+      "unit": "km2",
+      "data_source": "N15 - Geospatial Fabric",
+      "references": "Viger (2014), Viger and Bock (2014)",
+      "section": "camels_topo - Topography and location",
+      "source_file": "camels_topo.txt",
+      "dtype": "Float64"
+    },
+    "geol_1st_class": {
+      "documented_name": "geol_class_1st",
+      "description": "most common geologic class in the catchment",
+      "unit": "-",
+      "data_source": "GLiM",
+      "references": "Hartmann and Moosdorf (2012)",
+      "section": "camels_geol - Geological characteristics",
+      "source_file": "camels_geol.txt",
+      "dtype": "string"
+    },
+    "glim_1st_class_frac": {
+      "documented_name": "geol_class_1st_frac",
+      "description": "fraction of the catchment area associated with its most common geologic class",
+      "unit": "-",
+      "data_source": "GLiM",
+      "references": "Hartmann and Moosdorf (2012)",
+      "section": "camels_geol - Geological characteristics",
+      "source_file": "camels_geol.txt",
+      "dtype": "Float64"
+    },
+    "geol_2nd_class": {
+      "documented_name": "geol_class_2nd",
+      "description": "2nd most common geologic class in the catchment",
+      "unit": "-",
+      "data_source": "GLiM",
+      "references": "Hartmann and Moosdorf (2012)",
+      "section": "camels_geol - Geological characteristics",
+      "source_file": "camels_geol.txt",
+      "dtype": "string"
+    },
+    "glim_2nd_class_frac": {
+      "documented_name": "geol_class_2nd_frac",
+      "description": "fraction of the catchment area associated with its 2nd most common geologic class",
+      "unit": "-",
+      "data_source": "GLiM",
+      "references": "Hartmann and Moosdorf (2012)",
+      "section": "camels_geol - Geological characteristics",
+      "source_file": "camels_geol.txt",
+      "dtype": "Float64"
+    },
+    "carbonate_rocks_frac": {
+      "documented_name": "carb_rocks_frac",
+      "description": "fraction of the catchment area characterized as \"Carbonate sedimentary rocks\"",
+      "unit": "-",
+      "data_source": "GLiM",
+      "references": "Hartmann and Moosdorf (2012)",
+      "section": "camels_geol - Geological characteristics",
+      "source_file": "camels_geol.txt",
+      "dtype": "Float64"
+    },
+    "geol_porostiy": {
+      "documented_name": "geol_porosity",
+      "description": "subsurface porosity",
+      "unit": "-",
+      "data_source": "GLHYMPS",
+      "references": "Gleeson et al. (2014)",
+      "section": "camels_geol - Geological characteristics",
+      "source_file": "camels_geol.txt",
+      "dtype": "Float64"
+    },
+    "geol_permeability": {
+      "documented_name": "geol_permeability",
+      "description": "subsurface permeability (log10)",
+      "unit": "m2",
+      "data_source": "GLHYMPS",
+      "references": "Gleeson et al. (2014)",
+      "section": "camels_geol - Geological characteristics",
+      "source_file": "camels_geol.txt",
+      "dtype": "Float64"
+    }
+  }
+}
