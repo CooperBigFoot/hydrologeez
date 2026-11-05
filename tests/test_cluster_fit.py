@@ -21,6 +21,17 @@ def test_dependent_distance_and_band() -> None:
     assert_allclose(distances(a[None], b[None], radius=0), [[2.0]])
 
 
+def test_centroid_and_objective_obey_explicit_zero_radius() -> None:
+    # With no warping, the centroid is the pointwise mean and each squared
+    # distance is 0.5. Radius zero discriminates the bug, not the study tolerance.
+    values = np.array([[[0.0], [0.0], [1.0], [0.0], [0.0]], [[0.0], [1.0], [0.0], [0.0], [0.0]]])
+    fit = fit_candidates(values, (1,), seed=3, n_init=1, max_iter=10, tolerance=1e-6, radius=0)[1]
+    assert_allclose(fit.centroids, [[[0.0], [0.5], [0.5], [0.0], [0.0]]])
+    assert_allclose(distances(values, fit.centroids, radius=0), np.full((2, 1), np.sqrt(0.5)))
+    assert_allclose(fit.inertia, 0.5)
+    assert_array_equal(fit.labels, [0, 0])
+
+
 def test_fit_records_measured_convergence_and_reproducibility() -> None:
     values = np.array([np.full((4, 2), x) for x in (0.0, 0.1, 5.0, 5.1)])
     result = fit_candidates(values, (2,), seed=3, n_init=2, max_iter=10, tolerance=1e-6, radius=2)

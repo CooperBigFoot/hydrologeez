@@ -72,7 +72,14 @@ restarts, 50 outer iterations and objective tolerance 1e-6 by default; `seed`,
 Petitjean DBA with 30 iterations and tolerance 1e-5. Inner DBA convergence is
 **not exposed**; warnings are retained. A narrow version-constrained subclass
 observes outer objective history and successful restart counts without replacing
-the library algorithm. This private hook is why tslearn is constrained to 0.10.x.
+the library algorithm. This private hook is why tslearn stays on 0.10.x.
+The cluster extra pins a patched tslearn 0.10.0 Git revision that makes explicit
+warping constraints apply to DBA updates as well as distances
+([upstream defect](https://github.com/tslearn-team/tslearn/issues/803)). Its
+`0.10.0+dtwconstraint` version is recorded in `run.json`; `pyproject.toml` and
+`uv.lock` identify the exact source revision. Original unpatched CAMELS outputs
+are not validated by this correction: preserve them and rerun under a new
+experiment name for [#142](https://github.com/CooperBigFoot/hydrologeez/issues/142).
 `converged` means the observed outer objective change met tolerance, including
 on the last allowed iteration. It does not promise inner DBA convergence or a
 global optimum. The selected restart's history is saved; final inertia is
