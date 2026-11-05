@@ -2,7 +2,7 @@
   "source": "https://zenodo.org/records/15529996",
   "documentation": "camels_attributes_v2.0.xlsx",
   "citation": "Addor et al. (2017), https://doi.org/10.5194/hess-2017-169",
-  "missing_value": "Source NA becomes null in storage and pandas NA in memory; no imputation.",
+  "missing_value": "Source NA becomes null in storage and in memory; no imputation.",
   "fields": {
     "gauge_id": {
       "documented_name": "gauge_id",
