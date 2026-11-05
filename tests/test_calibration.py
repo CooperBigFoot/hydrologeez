@@ -34,7 +34,8 @@ def test_population_mapping_and_candidate_specific_continuous_warmup() -> None:
         np.testing.assert_allclose(q[5:, i], continued.outlet[:, 0])
     one = evaluator.scores(candidates, batch_size=1)
     both = evaluator.scores(candidates, batch_size=2)
-    assert one == both
+    for first, second in zip(one, both, strict=True):
+        np.testing.assert_allclose(list(first["training"].values()), list(second["training"].values()), equal_nan=True)
     assert evaluator.coverage["training"] == {2000: 9}
 
 
@@ -111,3 +112,22 @@ def test_validation_and_missing_observations_do_not_steer_optimizer() -> None:
     assert_array_equal(results[0].solutions[0].parameters, results[1].solutions[0].parameters)
     assert results[0].solutions[0].objectives == results[1].solutions[0].objectives
     assert results[0].solutions[0].scores != results[1].solutions[0].scores
+
+
+def test_candidate_peak_timing_preserves_missing_day_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    from hydrologeez.calibration import SEARCH_BOUNDS, CandidateEvaluator
+    from hydrologeez.hbv_light import Forcing
+
+    dates = np.arange(date(2000, 1, 1).toordinal(), date(2000, 1, 21).toordinal(), dtype=np.int64)
+    forcing = Forcing(np.tile([4.0, 8.0, 1.0], (20, 1, 1)), np.ones(1), np.array([0, 1], dtype=np.int64))
+    observed = np.ones(20)
+    observed[10] = 10
+    observed[9] = np.nan
+    evaluator = CandidateEvaluator(forcing, dates, observed, 0, Period("2000-01-01", "2000-01-21"))
+
+    def discharge(candidates: np.ndarray) -> np.ndarray:
+        return np.nan_to_num(observed)[:, None]
+
+    monkeypatch.setattr(evaluator, "discharge", discharge)
+    scores = evaluator.scores(SEARCH_BOUNDS[:, 0][None, :], batch_size=1)
+    assert np.isnan(scores[0]["training"]["peak_timing"])

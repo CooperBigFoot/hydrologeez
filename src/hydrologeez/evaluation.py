@@ -79,7 +79,11 @@ def evaluate_discharge(
                         stop,
                         int(np.count_nonzero(~np.isnan(aligned))),
                         int(np.count_nonzero(observed.present[source])),
-                        evaluate(aligned, selected.values["discharge"][:, 0]),
+                        evaluate(
+                            aligned,
+                            selected.values["discharge"][:, 0],
+                            dates=np.datetime64("0001-01-01", "D") + (selected.dates - 1),
+                        ),
                     )
                 )
                 del selected

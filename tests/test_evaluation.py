@@ -102,6 +102,28 @@ def test_identified_scores_match_complete_period_arrays(stores: tuple[Path, Path
         assert score.present_days == score.observed_days
 
 
+def test_saved_evaluation_passes_complete_daily_dates(
+    stores: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from numpy.typing import NDArray
+
+    from hydrologeez import evaluation
+
+    def score(
+        observed: NDArray[np.float64], simulated: NDArray[np.float64], *, dates: NDArray[np.datetime64]
+    ) -> dict[str, float]:
+        np.testing.assert_array_equal(dates, np.arange("2000-01-02", "2000-01-12", dtype="datetime64[D]"))
+        assert observed.shape == simulated.shape == dates.shape
+        np.testing.assert_array_equal(np.flatnonzero(np.isnan(observed)), [0, 3, 9])
+        return {"peak_timing": 2.0}
+
+    monkeypatch.setattr(evaluation, "evaluate", score)
+    result = evaluation.evaluate_discharge(
+        *stores, basin_ids=["a"], parameter_ids=["p"], periods=[("2000-01-02", "2000-01-12")]
+    )[0]
+    assert result.scores == {"peak_timing": 2.0}
+
+
 @pytest.mark.parametrize("location,units", [("output", "cfs"), ("observations", "mm/day")])
 def test_rejects_mismatched_units(stores: tuple[Path, Path], location: str, units: str) -> None:
     from hydrologeez.evaluation import evaluate_discharge
