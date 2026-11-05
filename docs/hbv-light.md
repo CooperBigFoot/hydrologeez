@@ -1,5 +1,7 @@
 # HBV-light: a worked mathematical description
 
+For saving selected simulation histories and resuming sweeps, see [HBV output storage](hbv-output.md).
+
 ## Model identity and limits
 
 HBV stores water in snow, soil, and groundwater, then routes runoff to the
