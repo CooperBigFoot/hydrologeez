@@ -78,6 +78,59 @@ storage (exposed in HBV day/zone/variable order). It is not a zero-copy promise.
 Observations and flags follow the same selected basin/date order. Warm-up,
 evaluation masks and basin eligibility are separate research choices.
 
+
+## Static attributes
+
+Prepare all seven local attribute tables independently of daily records or USGS
+area snapshots. The output directory must be new; existing daily stores do not
+need rebuilding.
+
+```sh
+uv run python -m scripts.camels_attributes --raw data/camels-us/raw \
+  --output data/camels-us/attributes
+```
+
+```python
+from pathlib import Path
+from hydrologeez.camels import Camels, read_attributes
+
+attributes = read_attributes(Path("data/camels-us/attributes"))
+# A resident pandas DataFrame: 671 gauge_id rows and 59 source-named columns.
+print(attributes.loc["01013500", ["gauge_name", "p_mean", "geol_porostiy"]])
+print(attributes.attrs["fields"]["p_mean"])  # description, unit, source, references
+
+store = Camels(Path("data/camels-us/prepared"))
+selected = store.select(["01022500", "01013500"], "1990-01-01", "2000-01-01")
+aligned = attributes.loc[list(selected.ids)]  # reuse without reading storage
+assert tuple(aligned.index) == selected.ids
+# Or materialize only those rows through the reader:
+aligned = read_attributes(Path("data/camels-us/attributes"), selected.ids)
+```
+
+`attributes.json` stores typed columns, string identities, and field metadata.
+The reader loads this small table only, not raw sources or daily records. It
+returns rows in the requested order and rejects unknown, duplicate, or empty
+selections. Without IDs it returns all basins in sorted gauge-ID order.
+
+Numeric columns use pandas nullable `Float64`; string columns use `string`.
+Source `NA` becomes JSON null and pandas `NA`, including missing geological
+categories. Zero remains zero. Gauge IDs and `huc_02` retain leading zeros;
+names and categories retain their exact source text, including land-cover
+leading spaces. No scaling, imputation, category encoding, or clipping occurs.
+
+Field metadata is transcribed from the local `camels_attributes_v2.0.xlsx`
+(also supplied as PDF), with descriptions, units, data sources, references,
+and section notes about time periods. `documented_name` records documentation
+aliases while columns keep raw names, including `geol_porostiy` and
+`soil_depth_statsgo`. A blank documented unit stays blank (`slope_fdc`);
+`-` stays `-`. Permeability is log10(m²). The documentation labels
+`zero_q_freq` as `%` although source values range from 0 to about 0.965;
+neither values nor the documented unit are reinterpreted.
+
+The attribute tests compare every local source field and value when the raw
+tables are available, and always test missing values, categorical text,
+metadata, caller ordering, and alignment with daily selections on small inputs.
+
 ## Validation and bounded local evidence
 
 The [independent audit](camels-evidence/audit.md) covers all 671 identities:
