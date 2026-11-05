@@ -38,6 +38,52 @@ produce NaN scores; identical constant series do not have perfect KGE.
 percentage bias for FHV/FLV. Nonfinite scores yield infinity, never a reward.
 Choose objectives for the scientific question; overlapping metrics are allowed.
 
+## Evaluate saved discharge
+
+Use `hydrologeez.evaluation.evaluate_discharge` with existing
+[output stores](hbv-output.md) and [prepared observations](camels.md):
+
+```python
+from pathlib import Path
+from hydrologeez.evaluation import evaluate_discharge
+
+scores = evaluate_discharge(
+    Path("data/hbv-results"),
+    Path("data/camels-us/prepared"),  # any location with the same prepared layout
+    basin_ids=["03241500", "01013500"],
+    parameter_ids=["p42", "p7"],
+    periods=[("1995-01-01", "2000-01-01"), ("2000-01-01", "2005-01-01")],
+)
+for score in scores:
+    print(
+        score.basin_id,
+        score.parameter_id,
+        score.start,
+        score.stop,
+        score.observed_days,
+        score.present_days,
+        score.scores,
+    )
+```
+
+Results follow basin, parameter, then period order. Each record contains all six
+metrics and their component diagnostics, with the conventions above unchanged.
+`observed_days` counts nonmissing converted observations; `present_days` counts
+source rows, including rows with missing discharge. Period bounds identify the
+number of requested days. No coverage threshold or QC filtering is applied.
+
+Dates are start-inclusive and stop-exclusive. Observation dates outside their
+recorded coverage are missing; the scoring period is never silently shortened.
+Simulation dates must lie entirely within recorded output coverage, excluding
+unsaved warm-up. Unknown identities, unavailable pairs, incomplete stores, and
+incompatible units raise errors. Prepared cfs values use the existing header-area
+conversion to mm/day; saved discharge must be mm/day.
+
+This reads no forcing and runs no model. One simulation's full scoring period and
+one basin's observation timeline are held at a time, rather than all simulation
+histories. Scores are retained in a list; time windows are never scored separately
+and averaged. Inputs must remain unchanged during evaluation.
+
 ## Sources
 
 - [Pool, Vis & Seibert (2018)](https://doi.org/10.1080/02626667.2018.1552002),
