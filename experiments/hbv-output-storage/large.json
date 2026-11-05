@@ -1,0 +1,27 @@
+{
+  "days": 1460,
+  "copies": 10000,
+  "simulations": 40000,
+  "basins": [
+    "01013500",
+    "03241500",
+    "08066200",
+    "14400000"
+  ],
+  "batch_size": 256,
+  "window_size": 365,
+  "threads": 1,
+  "workers": 1,
+  "preparation_seconds": 3.9903956251218915,
+  "warmup_seconds": 0.05939675006084144,
+  "parameter_hash_simulation_write_inspect_seconds": 50.353264916921034,
+  "total_excluding_warmup_seconds": 54.343660542042926,
+  "peak_rss_bytes": 497811456,
+  "stored_bytes": 9484594083,
+  "files": 12562,
+  "largest_tile_history_bytes": 17192960,
+  "platform": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
+  "python": "3.13.14",
+  "numpy": "2.5.4",
+  "numba": "0.68.1"
+}
