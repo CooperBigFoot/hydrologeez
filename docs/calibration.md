@@ -10,19 +10,24 @@ from pathlib import Path
 from hydrologeez.camels import Camels
 from hydrologeez.calibration import CandidateEvaluator, Period, calibrate
 
-inputs = Camels(Path("data/camels-us/prepared")).select(
-    ["01013500"], "1980-01-01", "2015-01-01"
-)
+inputs = Camels(Path("data/camels-us/prepared")).select(["01013500"], "1980-01-01", "2015-01-01")
 evaluator = CandidateEvaluator(
-    inputs.forcing, inputs.dates, inputs.discharge_mm_day[:, 0], 0,
+    inputs.forcing,
+    inputs.dates,
+    inputs.discharge_mm_day[:, 0],
+    0,
     Period("1981-10-01", "2000-10-01"),
     validation=Period("2000-10-01", "2015-01-01"),
     minimum_days=None,
 )
 ensemble = calibrate(
-    evaluator, seeds=list(range(100)),  # 100 independent runs, not 100 candidates
+    evaluator,
+    seeds=list(range(100)),  # 100 independent runs, not 100 candidates
     objectives=("kge_np", "nse"),
-    population_size=100, generations=100, retain=5, batch_size=64,
+    population_size=100,
+    generations=100,
+    retain=5,
+    batch_size=64,
     report=("training", "validation"),
 )
 # Parameters are in PARAMETER_NAMES order; regenerate only selected hydrographs.
