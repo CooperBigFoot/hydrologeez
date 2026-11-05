@@ -51,11 +51,12 @@ Spearman rank correlation using distance from their ideal values. Retain useful
 component diagnostics as well as the composite score.
 
 Provide a small, clearly defined metric surface usable both during calibration
-and for independent evaluation of simulations. Original KGE, NSE, log-NSE, and
-high-/low-flow bias measures are the intended starting candidates alongside the
-required Pool metric. Exact tail definitions, log zero treatment, and the final
-small supporting catalogue remain implementation design work: ground them in
-sources, document conventions, and validate them rather than silently guessing.
+and for independent evaluation of simulations. Include high-/low-flow bias
+measures to address the user's requested flow-regime diagnostics. Original KGE,
+NSE, and log-NSE are the intended supporting candidates alongside the required
+Pool metric. Exact tail definitions, log zero treatment, and the final small
+supporting catalogue remain implementation design work: ground them in sources,
+document conventions, and validate them rather than silently guessing.
 Do not expand into an ecological streamflow-characteristic catalogue. Explicit
 peak/event-timing metrics are deferred. Log-KGE is not a required deliverable;
 Pool (2018) warns about its near-zero and unit sensitivity.
