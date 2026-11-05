@@ -763,7 +763,7 @@ requires-dist = [
     { name = "polars", specifier = ">=2.1.0" },
     { name = "scikit-learn", marker = "extra == 'cluster'", specifier = ">=1.9.1" },
     { name = "seaborn", marker = "extra == 'cluster'", specifier = ">=0.13.2" },
-    { name = "tslearn", marker = "extra == 'cluster'", specifier = ">=0.10.0,<0.11" },
+    { name = "tslearn", marker = "extra == 'cluster'", git = "https://github.com/CooperBigFoot/tslearn.git?rev=2042188a3e39b728affd3da688e212e59bfb1c06" },
 ]
 provides-extras = ["cluster"]
 
@@ -2090,8 +2090,8 @@ wheels = [
 
 [[package]]
 name = "tslearn"
-version = "0.10.0"
-source = { registry = "https://pypi.org/simple" }
+version = "0.10.0+dtwconstraint"
+source = { git = "https://github.com/CooperBigFoot/tslearn.git?rev=2042188a3e39b728affd3da688e212e59bfb1c06#2042188a3e39b728affd3da688e212e59bfb1c06" }
 dependencies = [
     { name = "joblib" },
     { name = "numba" },
@@ -2099,10 +2099,6 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "scipy" },
     { name = "statsmodels" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/45/73/2ef636bd9e152d32c9955857c5ea4e589fdfb6f671c7d5af75e4d265d2c2/tslearn-0.10.0.tar.gz", hash = "sha256:d37147e49499f3c2b9b4f7f740c0f3ef67a3b69bf352ca6eadea532a0ab43d61", size = 19398980, upload-time = "2026-10-22T09:11:44.831Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/35/6c/9c54d1da774b050d893b2c84bf3de02f4617b0fd4a6a914eb5f341481278/tslearn-0.10.0-py3-none-any.whl", hash = "sha256:793ebbb13ba68cb3fb67b8f6c9a3d7eb2a0ff21a8879f22f47f32b359d6abbbc", size = 423849, upload-time = "2026-10-22T09:11:24.668Z" },
 ]
 
 [[package]]

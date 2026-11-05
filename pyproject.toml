@@ -17,7 +17,7 @@ cluster = [
     "matplotlib>=3.11.2",
     "scikit-learn>=1.9.1",
     "seaborn>=0.13.2",
-    "tslearn>=0.10.0,<0.11",
+    "tslearn @ git+https://github.com/CooperBigFoot/tslearn.git@2042188a3e39b728affd3da688e212e59bfb1c06",
 ]
 
 [build-system]
