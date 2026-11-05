@@ -1,4 +1,4 @@
-"""Publication-style maps and seasonal profiles in original physical units."""
+"""Publication-style maps and separate-variable seasonal profiles."""
 
 import re
 from colorsys import hsv_to_rgb
@@ -77,18 +77,28 @@ def render_figures(
     coordinates: FloatArray,
     scores: dict[int, float | None],
     search: bool,
-    layout: str = "paired",
+    rows: int | None = None,
+    columns: int | None = None,
 ) -> None:
-    """Save PNG/SVG diagnostics, a CONUS map, and one selected seasonal layout.
+    """Save PNG/SVG diagnostics, a CONUS map, and a cluster grid per variable.
 
     Coordinates are longitude/latitude in degrees. Cluster labels are zero-based
     indices into centroids. Cartopy may download Natural Earth geographic data
     on first use; offline runs need those files in Cartopy's local data cache.
     """
-    if layout not in {"paired", "separate"}:
-        raise ValueError("layout must be 'paired' or 'separate'")
-    directory.mkdir(parents=True, exist_ok=True)
     count = centroids.shape[0]
+    if (rows is not None and rows < 1) or (columns is not None and columns < 1):
+        raise ValueError("Grid rows and columns must be positive")
+    if rows is None and columns is None:
+        columns = min(2, count)
+    if rows is None:
+        assert columns is not None
+        rows = (count + columns - 1) // columns
+    if columns is None:
+        columns = (count + rows - 1) // rows
+    if rows * columns < count:
+        raise ValueError("Grid must have enough panels for all clusters")
+    directory.mkdir(parents=True, exist_ok=True)
     colors = _cluster_colors(count)
     with (
         sns.plotting_context("paper", font_scale=1.3),
@@ -125,7 +135,10 @@ def render_figures(
                 label=f"Cluster {cluster} (n={int(selected.sum())})",
                 zorder=3,
             )
-        axis.legend(loc="lower left", fontsize="small", frameon=False)
+        axis.spines["geo"].set_visible(False)
+        axis.legend(
+            loc="upper center", bbox_to_anchor=(0.5, -0.04), ncol=min(count, 4), fontsize="small", frameon=False
+        )
         _save(figure, directory, "conus_cluster_map")
 
         limits: list[tuple[float, float]] = []
@@ -134,41 +147,22 @@ def render_figures(
             high = float(max(members[:, :, channel].max(), centroids[:, :, channel].max()))
             margin = 0.08 * (high - low) if high > low else max(abs(low) * 0.08, 0.5)
             limits.append((low - margin, high + margin))
-        if layout == "paired":
-            figure = Figure(figsize=(8 * len(variables), 4 * count), layout="constrained")
-            axes = figure.subplots(count, len(variables), squeeze=False, sharex=True, sharey="col")
-            for cluster in range(count):
-                for channel, variable in enumerate(variables):
-                    _profile(
-                        axes[cluster, channel],
-                        members[labels == cluster, :, channel],
-                        centroids[cluster, :, channel],
-                        colors[cluster],
-                        cluster,
-                        variable,
-                        units[channel],
-                        limits[channel],
-                    )
-            _save(figure, directory, "seasonal_profiles_by_cluster")
-        else:
-            columns = min(2, count)
-            rows = (count + columns - 1) // columns
-            for channel, variable in enumerate(variables):
-                figure = Figure(figsize=(8 * columns, 4 * rows), layout="constrained")
-                axes = figure.subplots(rows, columns, squeeze=False, sharex=True, sharey=True)
-                for cluster, axis in enumerate(axes.flat):
-                    if cluster >= count:
-                        axis.set_visible(False)
-                        continue
-                    _profile(
-                        axis,
-                        members[labels == cluster, :, channel],
-                        centroids[cluster, :, channel],
-                        colors[cluster],
-                        cluster,
-                        variable,
-                        units[channel],
-                        limits[channel],
-                    )
-                name = re.sub(r"[^a-z0-9]+", "_", _VARIABLE_NAMES.get(variable, variable).lower()).strip("_")
-                _save(figure, directory, f"{name}_profiles")
+        for channel, variable in enumerate(variables):
+            figure = Figure(figsize=(8 * columns, 4 * rows), layout="constrained")
+            axes = figure.subplots(rows, columns, squeeze=False, sharex=True, sharey=True)
+            for cluster, axis in enumerate(axes.flat):
+                if cluster >= count:
+                    axis.set_visible(False)
+                    continue
+                _profile(
+                    axis,
+                    members[labels == cluster, :, channel],
+                    centroids[cluster, :, channel],
+                    colors[cluster],
+                    cluster,
+                    variable,
+                    units[channel],
+                    limits[channel],
+                )
+            name = re.sub(r"[^a-z0-9]+", "_", _VARIABLE_NAMES.get(variable, variable).lower()).strip("_")
+            _save(figure, directory, f"{name}_profiles")

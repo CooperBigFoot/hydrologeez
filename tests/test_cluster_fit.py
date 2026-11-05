@@ -79,3 +79,15 @@ def test_identical_curves_cannot_silently_reduce_requested_count() -> None:
 
     with pytest.raises(ValueError, match="no successful fit"):
         fit_candidates(np.zeros((3, 4, 2)), (2,), seed=1, n_init=1, max_iter=3, tolerance=1e-6, radius=2)
+
+
+def test_per_basin_scaling_removes_independent_channel_offsets_and_amplitudes() -> None:
+    from hydrologeez.cluster.fit import per_basin_scale
+
+    shape = np.tile(np.array([[[-1.0, 1.0], [1.0, -1.0]]]), (3, 26, 1))
+    means = np.array([[[2.0, 10.0]], [[8.0, -3.0]], [[-2.0, 100.0]]])
+    scales = np.array([[[3.0, 2.0]], [[1.0, 7.0]], [[4.0, 5.0]]])
+    scaled, mean, std = per_basin_scale(shape * scales + means)
+    assert_allclose(scaled, shape)
+    assert_allclose(mean, means)
+    assert_allclose(std, scales)

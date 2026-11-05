@@ -23,7 +23,7 @@ basin_ids = result.clusters[0]  # string IDs, including leading zeros
 # Explicit search instead of k; no implicit count range.
 search = run_experiment(cycles, Path("results"), "pt-search", candidates=(2, 3, 4), seed=42, coordinates=coordinates)
 other = load_experiment(Path("results/pt-search"), count=2)
-other.plot(Path("results/pt-search/two-cluster-figures"), layout="separate")
+other.plot(Path("results/pt-search/two-cluster-figures"), rows=1, columns=2)
 ```
 
 `camels_cycles` selects precipitation and mean temperature by default. Pass an
@@ -58,8 +58,13 @@ and date. Nothing is imputed or silently excluded.
 
 ## Method and diagnostics
 
-Each variable uses one pooled population mean and standard deviation over all
-basins and seasonal bins. Between-basin level and amplitude differences remain.
+By default, `normalization="pooled"` uses one population mean and standard deviation
+per variable over all basins and seasonal bins. Between-basin level and amplitude
+differences remain. Set `normalization="per_basin"` in `run_experiment` to subtract
+each basin/channel's mean and divide by its population standard deviation across
+52 seasonal steps. This removes independent offsets and positive amplitude scales,
+retaining seasonal shape and timing. Per-basin inputs must have no flat seasonal
+curves.
 Channels have equal weight after scaling. Dependent multivariate DTW uses a
 single path, squared Euclidean vector local costs, and the square root of the
 accumulated cost as its distance. A Sakoe–Chiba radius of **two weekly bins** is a
@@ -102,19 +107,30 @@ An existing `<output_dir>/<experiment>` is always rejected. Results include
 `membership.csv`, `clusters.json`, `seasonal_cycles.npz`, `diagnostics.csv`,
 `run.json` and, when requested, `figures/`. Labels are zero-based. JSON IDs are
 strings; CSV readers must explicitly retain string IDs. The NPZ contains original
-unwarped member curves, inverse-scaled DTW barycenters and labels for every
-candidate. `run.json` defines all axis orders, selected count, calendar, date
+unwarped member curves in physical units, standardized fitted DTW barycenters
+and labels for every candidate (bundle format 2). `run.json` defines all axis orders, selected count, calendar, date
 range, scaling, seed, settings, warnings, outer objective histories and versions.
 `load_experiment(..., count=k)` selects any retained fit without refitting or
-changing the original bundle. `Experiment.centroids` is in original units;
-internal `Candidate.centroids` is scaled.
+changing the original bundle. `Experiment.normalization` records the mode;
+`mean` and `std` retain its scaling parameters. `normalized_members` reconstructs
+the fitted inputs. `Experiment.centroids` is in physical units for pooled runs
+and standardized, dimensionless units for per-basin runs; `centroid_units` labels
+these explicitly. Internal `Candidate.centroids` is always scaled. Per-basin
+centroids have no unique physical-unit inverse. Existing format-1 pooled bundles
+remain reloadable.
 
 Figures use a consistent six-color palette extended with golden-angle hues for
 larger k. Every cluster map and profile uses the same color. Grey profiles are
 actual member climatologies; colored curves are DTW barycenters, not arithmetic
-averages. `layout="paired"` uses cluster rows/variable columns;
-`layout="separate"` produces one grid per variable. Units and common variable
-scales are preserved. Search alone produces a silhouette figure. The map is
+averages. Each variable has its own profile figure, in both normalization modes.
+Pooled profiles use physical units; per-basin profiles use standardized,
+dimensionless member curves and centroids. Scales are common within a variable.
+Pass `rows=2, columns=2` or `rows=1, columns=4` to `run_experiment` or `.plot()`
+to choose the cluster grid. An omitted dimension is inferred; with both omitted,
+the grid uses at most two columns. Undersized grids are rejected and unused panels
+are hidden. The former `layout` argument has been removed: omit it for separate
+figures and use `rows`/`columns` to control their arrangement. Combined-variable
+figures are no longer generated. Search alone produces a silhouette figure. The map is
 always separate, with a CONUS extent; use CONUS coordinates for this workflow.
 Cartopy downloads Natural Earth boundaries on first use; offline plotting needs
 its populated data cache. A plotting failure leaves the fitted numerical bundle

@@ -60,3 +60,69 @@ def test_iteration_limit_and_empty_clusters(tmp_path: Path) -> None:
     object.__setattr__(same, "values", np.zeros((4, 52, 2)))
     with pytest.raises(ValueError, match="variance"):
         run_experiment(same, tmp_path, "constant", k=2, figures=False)
+
+
+def test_per_basin_bundle_candidates_and_replot_without_fit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from dataclasses import replace
+
+    shape = np.sin(np.arange(52) * 2 * np.pi / 52)
+    values = np.stack([np.column_stack((np.roll(shape, shift), np.roll(shape, shift + 5))) for shift in (0, 1, 20, 21)])
+    seasonal = replace(cycles(), values=values * np.arange(1, 5)[:, None, None] + 10)
+    result = run_experiment(
+        seasonal,
+        tmp_path,
+        "shape",
+        candidates=(1, 2),
+        normalization="per_basin",
+        figures=False,
+        coordinates=np.array([[-120.0, 40], [-110, 35], [-90, 40], [-80, 35]]),
+    )
+
+    def no_fit(*args: object, **kwargs: object) -> None:
+        pytest.fail("Reloading and plotting must not fit")
+
+    monkeypatch.setattr("hydrologeez.cluster.experiment.fit_candidates", no_fit)
+    for count in (1, 2):
+        loaded = load_experiment(result.directory, count=count)
+        assert loaded.normalization == "per_basin"
+        assert loaded.centroid_units == ("standardized (dimensionless)",) * 2
+        assert_allclose(loaded.centroids, result.candidates[count].centroids)
+        assert_allclose(loaded.mean, np.full((4, 1, 2), 10))
+        assert_allclose(loaded.std[:, 0, 0], np.arange(1, 5) / np.sqrt(2))
+        assert_allclose(loaded.cycles.values, seasonal.values)
+        assert_allclose(loaded.normalized_members, values * np.sqrt(2), atol=1e-14)
+
+    import cartopy.mpl.geoaxes
+
+    monkeypatch.setattr(cartopy.mpl.geoaxes.GeoAxes, "coastlines", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cartopy.mpl.geoaxes.GeoAxes, "add_feature", lambda *args, **kwargs: None)
+    loaded.plot(rows=1, columns=4)
+    assert {p.stem for p in (loaded.directory / "figures").glob("*.png")} == {
+        "precipitation_profiles",
+        "temperature_profiles",
+        "conus_cluster_map",
+        "cluster_count_diagnostic",
+    }
+
+
+def test_legacy_pooled_bundle_and_default_reproducibility(tmp_path: Path) -> None:
+    default = run_experiment(cycles(), tmp_path, "default", k=2, figures=False)
+    explicit = run_experiment(cycles(), tmp_path, "explicit", k=2, normalization="pooled", figures=False)
+    assert_array_equal(default.labels, explicit.labels)
+    assert_array_equal(default.centroids, explicit.centroids)
+    # Format 1 stored physical-unit centers and omitted the normalization mode.
+    metadata = default.metadata.copy()
+    metadata["format"] = 1
+    metadata.pop("normalization")
+    metadata.pop("stored_centroids")
+    (default.directory / "run.json").write_text(json.dumps(metadata))
+    np.savez_compressed(
+        default.directory / "seasonal_cycles.npz",
+        members=cycles().values,
+        centroids_2=np.array([np.full((52, 2), x) for x in (0.05, 5.05)]),
+        labels_2=np.array([0, 0, 1, 1]),
+    )
+    loaded = load_experiment(default.directory)
+    assert loaded.normalization == "pooled"
+    assert loaded.centroid_units == cycles().units
+    assert_allclose(loaded.centroids[:, 0, 0], [0.05, 5.05])
