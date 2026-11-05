@@ -38,7 +38,7 @@ variable. Metadata IDs and variable names are ordered tuples of strings. Units
 are retained unchanged. An optional `provenance` dictionary records source details.
 You can also provide already aggregated `SeasonalCycles` following the calendar
 below. `figures=False` permits numerical experiments without coordinates; later
-plotting requires coordinates in the result bundle.
+maps and partition profiles require coordinates in the result bundle.
 
 ## Calendar and input policy
 
@@ -95,11 +95,60 @@ Empty-cluster failures reject the experiment rather than silently reducing k.
 Silhouettes use the same constrained DTW pairwise distances, not squared costs
 or a projection. Scores are undefined/null for k=1 or k=number of basins;
 singletons in other fits receive zero silhouette under scikit-learn's convention.
-Fixed mode fits only k. Search chooses the largest defined mean silhouette,
+Fixed mode fits only k and does not run automatic selection. By default,
+`selection="silhouette"` search chooses the largest defined mean silhouette,
 with ties resolved toward smaller k; all-undefined searches fail. This is best
 separation **among tested counts**, not proof of a unique scientific optimum.
 Pairwise scoring is quadratic in basin count; the 671-basin study has not been
 run as implementation validation.
+
+## Elbow selection and comparison
+
+Use `selection="elbow"` to apply Kneedle (`kneed`) to candidate count versus
+mean squared constrained-DTW inertia. The curve is fixed as convex/decreasing.
+`ElbowSettings` defaults to `S=1.0`, `interp_method="interp1d"`,
+`polynomial_degree=3`, and `online=False`. S is detector sensitivity, not
+confidence. The default uses measured values without polynomial smoothing;
+`interp_method="polynomial"` enables polynomial fitting (degree three rather
+than the library default seven). `online=True` continues scanning and may revise
+the elbow; otherwise the first detected elbow is returned.
+
+Using `cycles` and `coordinates` from the example above:
+
+```python
+from hydrologeez.cluster import ElbowSettings
+
+elbow = run_experiment(
+    cycles, Path("results"), "pt-elbow", candidates=tuple(range(2, 8)),
+    selection="elbow", elbow=ElbowSettings(), coordinates=coordinates,
+)
+original = load_experiment(elbow.directory)
+silhouette = original.select(selection="silhouette")
+more_sensitive = original.select(selection="elbow", elbow=ElbowSettings(S=0.5))
+print(more_sensitive.selected_count, more_sensitive.selection_reason)
+silhouette.plot(Path("results/pt-elbow/silhouette-figures"))
+manual = load_experiment(elbow.directory, count=4)
+```
+
+Views expose `selection`, `elbow` (effective settings or None), `selected_count`,
+and `selection_reason`. Reselection reuses retained fits without fitting,
+mutating the original view, or writing its bundle. Supply a separate figure
+directory when comparing views. Fixed `k` rejects elbow options.
+
+An elbow suggests diminishing fit improvements; silhouette measures separation.
+Neither proves a unique scientific optimum. Candidate range and detector settings
+matter, even when a count is returned. No detection is a valid result with
+`selected_count=None`; there is no fallback. Fewer than three candidates, flat,
+nonfinite, negative, or nonmonotonic inertia curves produce explicit no-selection
+diagnostics. Polynomial fitting also requires more candidates than its degree.
+Nonmonotonic values are not smoothed or reordered to manufacture an elbow.
+
+No-selection bundles retain all candidates, settings, rationale, diagnostic
+values and library versions. They omit membership exports, maps and profiles;
+`labels`, `centroids` and `clusters` raise a clear error. Reload, inspect candidates,
+or choose a retained count manually. `.plot()` still saves silhouette and inertia
+curves without needing coordinates. The inertia figure marks only a detected
+elbow, including when plotting a reselected view.
 
 ## Results and figures
 
@@ -108,7 +157,7 @@ An existing `<output_dir>/<experiment>` is always rejected. Results include
 `run.json` and, when requested, `figures/`. Labels are zero-based. JSON IDs are
 strings; CSV readers must explicitly retain string IDs. The NPZ contains original
 unwarped member curves in physical units, standardized fitted DTW barycenters
-and labels for every candidate (bundle format 2). `run.json` defines all axis orders, selected count, calendar, date
+and labels for every candidate (bundle format 3). `run.json` defines all axis orders, selected count, calendar, date
 range, scaling, seed, settings, warnings, outer objective histories and versions.
 `load_experiment(..., count=k)` selects any retained fit without refitting or
 changing the original bundle. `Experiment.normalization` records the mode;
@@ -116,8 +165,7 @@ changing the original bundle. `Experiment.normalization` records the mode;
 the fitted inputs. `Experiment.centroids` is in physical units for pooled runs
 and standardized, dimensionless units for per-basin runs; `centroid_units` labels
 these explicitly. Internal `Candidate.centroids` is always scaled. Per-basin
-centroids have no unique physical-unit inverse. Existing format-1 pooled bundles
-remain reloadable.
+centroids have no unique physical-unit inverse. Existing format-1 and format-2 bundles remain reloadable.
 
 Figures use a consistent six-color palette extended with golden-angle hues for
 larger k. Every cluster map and profile uses the same color. Grey profiles are
@@ -130,8 +178,8 @@ to choose the cluster grid. An omitted dimension is inferred; with both omitted,
 the grid uses at most two columns. Undersized grids are rejected and unused panels
 are hidden. The former `layout` argument has been removed: omit it for separate
 figures and use `rows`/`columns` to control their arrangement. Combined-variable
-figures are no longer generated. Search alone produces a silhouette figure. The map is
-always separate, with a CONUS extent; use CONUS coordinates for this workflow.
+figures are no longer generated. Search produces silhouette and inertia diagnostics. The map is
+separate, with a CONUS extent; use CONUS coordinates for this workflow.
 Cartopy downloads Natural Earth boundaries on first use; offline plotting needs
 its populated data cache. A plotting failure leaves the fitted numerical bundle
 available for `load_experiment(...).plot()` rather than requiring another fit.

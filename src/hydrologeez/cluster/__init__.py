@@ -2,5 +2,14 @@
 
 from .experiment import Experiment, load_experiment, run_experiment
 from .seasonal import SeasonalCycles, camels_cycles, seasonal_cycles
+from .selection import ElbowSettings
 
-__all__ = ["Experiment", "SeasonalCycles", "camels_cycles", "load_experiment", "run_experiment", "seasonal_cycles"]
+__all__ = [
+    "ElbowSettings",
+    "Experiment",
+    "SeasonalCycles",
+    "camels_cycles",
+    "load_experiment",
+    "run_experiment",
+    "seasonal_cycles",
+]

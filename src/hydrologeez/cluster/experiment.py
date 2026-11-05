@@ -2,7 +2,7 @@
 
 import csv
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Literal
@@ -12,6 +12,7 @@ from numpy.typing import NDArray
 
 from .fit import Candidate, fit_candidates, per_basin_scale, pooled_scale
 from .seasonal import CALENDAR_POLICY, SeasonalCycles
+from .selection import ElbowSettings, Selection, select_count, validate_selection
 
 
 @dataclass(frozen=True)
@@ -19,15 +20,51 @@ class Experiment:
     directory: Path
     cycles: SeasonalCycles
     candidates: dict[int, Candidate]
-    selected_count: int
+    selected_count: int | None
     mean: NDArray[np.float64]
     std: NDArray[np.float64]
     coordinates: NDArray[np.float64] | None
     metadata: dict[str, Any]
 
     @property
+    def selection(self) -> str:
+        return self.metadata.get("selection_method", "fixed" if self.metadata["mode"] == "fixed" else "silhouette")
+
+    @property
+    def elbow(self) -> ElbowSettings | None:
+        settings = self.metadata.get("elbow")
+        return ElbowSettings(**settings) if settings is not None else None
+
+    @property
+    def selection_reason(self) -> str:
+        return self.metadata.get("selection_reason", self.metadata["selection"])
+
+    def select(self, *, selection: Selection = "silhouette", elbow: ElbowSettings | None = None) -> "Experiment":
+        """Return an in-memory selection view without fitting or changing the bundle."""
+        selected, reason = select_count(
+            {k: fit.silhouette for k, fit in self.candidates.items()},
+            {k: fit.inertia for k, fit in self.candidates.items()},
+            selection,
+            elbow,
+        )
+        metadata = {
+            **self.metadata,
+            "selected_count": selected,
+            "selection_method": selection,
+            "selection_reason": reason,
+            "selection": reason,
+            "elbow": asdict(elbow or ElbowSettings()) if selection == "elbow" else None,
+        }
+        return replace(self, selected_count=selected, metadata=metadata)
+
+    def _selected(self) -> Candidate:
+        if self.selected_count is None:
+            raise ValueError("No selected partition; inspect candidates or explicitly select a retained count")
+        return self.candidates[self.selected_count]
+
+    @property
     def labels(self) -> NDArray[np.int64]:
-        return self.candidates[self.selected_count].labels
+        return self._selected().labels
 
     @property
     def normalization(self) -> str:
@@ -47,23 +84,33 @@ class Experiment:
 
     @property
     def centroids(self) -> NDArray[np.float64]:
-        fitted = self.candidates[self.selected_count].centroids
+        fitted = self._selected().centroids
         return fitted * self.std + self.mean if self.normalization == "pooled" else fitted
 
     @property
     def clusters(self) -> dict[int, list[str]]:
         return {
             k: [g for g, label in zip(self.cycles.ids, self.labels, strict=True) if label == k]
-            for k in range(self.selected_count)
+            for k in range(self._selected().count)
         }
 
     def plot(self, directory: Path | None = None, *, rows: int | None = None, columns: int | None = None) -> None:
-        from .plotting import render_figures
+        from .plotting import render_diagnostics, render_figures
 
+        output = directory or self.directory / "figures"
+        if self.metadata["mode"] == "search" or self.selection in ("elbow", "silhouette"):
+            render_diagnostics(
+                output,
+                {k: fit.silhouette for k, fit in self.candidates.items()},
+                {k: fit.inertia for k, fit in self.candidates.items()},
+                self.selected_count if self.selection == "elbow" else None,
+            )
+        if self.selected_count is None:
+            return
         if self.coordinates is None:
             raise ValueError("Gauge coordinates are required for the map; supply basin-ordered longitude/latitude")
         render_figures(
-            directory or self.directory / "figures",
+            output,
             self.cycles.values if self.normalization == "pooled" else self.normalized_members,
             self.centroids,
             self.labels,
@@ -71,7 +118,7 @@ class Experiment:
             self.centroid_units,
             self.coordinates,
             {k: fit.silhouette for k, fit in self.candidates.items()},
-            self.metadata["mode"] == "search",
+            False,
             rows=rows,
             columns=columns,
         )
@@ -84,6 +131,8 @@ def run_experiment(
     *,
     k: int | None = None,
     candidates: tuple[int, ...] | None = None,
+    selection: Selection = "silhouette",
+    elbow: ElbowSettings | None = None,
     seed: int = 0,
     n_init: int = 3,
     max_iter: int = 50,
@@ -106,6 +155,9 @@ def run_experiment(
         raise FileExistsError(directory)
     if (k is None) == (candidates is None):
         raise ValueError("Specify exactly one of k or candidates")
+    validate_selection(selection, elbow)
+    if k is not None and (selection != "silhouette" or elbow is not None):
+        raise ValueError("Automatic selection settings are incompatible with fixed k")
     if normalization not in ("pooled", "per_basin"):
         raise ValueError("normalization must be pooled or per_basin")
     values = cycles.values
@@ -122,17 +174,28 @@ def run_experiment(
         raise ValueError("Invalid seasonal curves or axis metadata")
     if coordinates is not None and (coordinates.shape != (len(cycles.ids), 2) or not np.isfinite(coordinates).all()):
         raise ValueError("Coordinates must be finite basin-ordered longitude/latitude pairs")
-    if figures and coordinates is None:
+    if figures and coordinates is None and selection != "elbow":
         raise ValueError("Coordinates required for figures; set figures=False for numerical outputs only")
     scaled, mean, std = pooled_scale(values) if normalization == "pooled" else per_basin_scale(values)
     counts = (k,) if k is not None else tuple(sorted(candidates or ()))
     fitted = fit_candidates(scaled, counts, seed=seed, n_init=n_init, max_iter=max_iter, tolerance=tolerance, radius=2)
-    eligible = [count for count in counts if fitted[count].silhouette is not None]
-    if k is None and not eligible:
-        raise ValueError("Search requires at least one defined silhouette (2 <= k < basin count)")
-    selected = k if k is not None else max(eligible, key=lambda count: (fitted[count].silhouette, -count))
+    selected, reason = (
+        (k, "Explicit fixed count")
+        if k is not None
+        else select_count(
+            {count: fit.silhouette for count, fit in fitted.items()},
+            {count: fit.inertia for count, fit in fitted.items()},
+            selection,
+            elbow,
+        )
+    )
+    if figures and selected is not None and coordinates is None:
+        raise ValueError("Coordinates required for selected partition figures; set figures=False")
     metadata: dict[str, Any] = {
-        "format": 2,
+        "format": 3,
+        "selection_method": "fixed" if k is not None else selection,
+        "selection_reason": reason,
+        "elbow": asdict(elbow or ElbowSettings()) if selection == "elbow" else None,
         "normalization": normalization,
         "stored_centroids": "standardized",
         "mode": "fixed" if k is not None else "search",
@@ -165,9 +228,9 @@ def run_experiment(
             "tolerance": 1e-5,
             "convergence": "not exposed by library",
         },
-        "selection": "highest defined mean silhouette among tested counts; ties smaller k; not a scientific optimum",
+        "selection": reason,
         "exclusions": [],
-        "versions": {name: version(name) for name in ("hydrologeez", "numpy", "tslearn", "scikit-learn")},
+        "versions": {name: version(name) for name in ("hydrologeez", "numpy", "tslearn", "scikit-learn", "kneed")},
         "fits": {
             str(count): {key: value for key, value in asdict(fit).items() if key not in ("labels", "centroids")}
             for count, fit in fitted.items()
@@ -175,12 +238,14 @@ def run_experiment(
     }
     result = Experiment(directory, cycles, fitted, selected, mean, std, coordinates, metadata)
     directory.mkdir(parents=True, exist_ok=False)
-    with (directory / "membership.csv").open("w", newline="") as stream:
-        writer = csv.writer(stream)
-        writer.writerow(("basin_id", "cluster"))
-        writer.writerows(zip(cycles.ids, result.labels, strict=True))
-    (directory / "clusters.json").write_text(json.dumps(result.clusters, indent=2) + "\n")
-    arrays = {"members": values, "centroids": fitted[selected].centroids, "labels": result.labels}
+    arrays = {"members": values}
+    if selected is not None:
+        with (directory / "membership.csv").open("w", newline="") as stream:
+            writer = csv.writer(stream)
+            writer.writerow(("basin_id", "cluster"))
+            writer.writerows(zip(cycles.ids, result.labels, strict=True))
+        (directory / "clusters.json").write_text(json.dumps(result.clusters, indent=2) + "\n")
+        arrays.update(centroids=fitted[selected].centroids, labels=result.labels)
     if coordinates is not None:
         arrays["coordinates"] = coordinates
     for count, fit in fitted.items():
@@ -210,12 +275,21 @@ def run_experiment(
 
 def load_experiment(directory: Path, *, count: int | None = None) -> Experiment:
     """Reload or select any previously evaluated count without refitting."""
-    metadata = json.loads((directory / "run.json").read_text())
-    if metadata["format"] not in (1, 2):
+    metadata: dict[str, Any] = json.loads((directory / "run.json").read_text())
+    if metadata["format"] not in (1, 2, 3):
         raise ValueError("Unsupported experiment format")
     selected = metadata["selected_count"] if count is None else count
-    if selected not in metadata["counts"]:
+    if selected is not None and selected not in metadata["counts"]:
         raise ValueError("Requested count was not evaluated")
+    if count is not None:
+        metadata = {
+            **metadata,
+            "selected_count": count,
+            "selection_method": "manual",
+            "selection_reason": "Explicit retained count",
+            "selection": "Explicit retained count",
+            "elbow": None,
+        }
     mean, std = np.asarray(metadata["mean"]), np.asarray(metadata["std"])
     with np.load(directory / "seasonal_cycles.npz", allow_pickle=False) as arrays:
         cycles = SeasonalCycles(

@@ -102,6 +102,7 @@ def test_per_basin_bundle_candidates_and_replot_without_fit(tmp_path: Path, monk
         "temperature_profiles",
         "conus_cluster_map",
         "cluster_count_diagnostic",
+        "inertia_diagnostic",
     }
 
 
@@ -126,3 +127,95 @@ def test_legacy_pooled_bundle_and_default_reproducibility(tmp_path: Path) -> Non
     assert loaded.normalization == "pooled"
     assert loaded.centroid_units == cycles().units
     assert_allclose(loaded.centroids[:, 0, 0], [0.05, 5.05])
+
+
+def test_elbow_no_selection_roundtrip_and_reselection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from hydrologeez.cluster import ElbowSettings
+
+    result = run_experiment(cycles(), tmp_path, "elbow", candidates=(1, 2), selection="elbow", figures=True)
+    assert result.selected_count is None  # Two points cannot establish curvature.
+    assert result.selection == "elbow"
+    assert result.elbow == ElbowSettings()
+    assert "three" in result.selection_reason
+    assert not (result.directory / "membership.csv").exists()
+    assert not (result.directory / "clusters.json").exists()
+    before = (result.directory / "run.json").read_bytes()
+
+    def no_fit(*args: object, **kwargs: object) -> None:
+        pytest.fail("Selection must reuse retained fits")
+
+    monkeypatch.setattr("hydrologeez.cluster.experiment.fit_candidates", no_fit)
+    loaded = load_experiment(result.directory)
+    assert loaded.selected_count is None
+    assert loaded.elbow == result.elbow
+    for property_name in ("labels", "centroids", "clusters"):
+        with pytest.raises(ValueError, match="No selected partition"):
+            getattr(loaded, property_name)
+    selected = loaded.select(selection="silhouette")
+    assert selected.selected_count == 2
+    assert selected.selection == "silhouette"
+    assert selected.candidates[2] is loaded.candidates[2]
+    assert loaded.selected_count is None
+    assert load_experiment(result.directory, count=1).selected_count == 1
+    assert (result.directory / "run.json").read_bytes() == before
+    loaded.plot()
+    assert {p.stem for p in (result.directory / "figures").glob("*.png")} == {
+        "cluster_count_diagnostic",
+        "inertia_diagnostic",
+    }
+
+
+def test_incompatible_selection_arguments(tmp_path: Path) -> None:
+    from hydrologeez.cluster import ElbowSettings
+
+    with pytest.raises(ValueError, match="fixed"):
+        run_experiment(cycles(), tmp_path, "fixed-elbow", k=2, selection="elbow", figures=False)
+    with pytest.raises(ValueError, match="elbow"):
+        run_experiment(cycles(), tmp_path, "wrong-settings", candidates=(1, 2), elbow=ElbowSettings(), figures=False)
+
+
+def test_selected_elbow_roundtrip_and_view_markers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from dataclasses import replace
+
+    from matplotlib.figure import Figure
+
+    from hydrologeez.cluster import ElbowSettings
+    from hydrologeez.cluster.fit import Candidate
+
+    seasonal = replace(
+        cycles(), ids=tuple(str(i) for i in range(7)), values=np.arange(7 * 52 * 2).reshape(7, 52, 2).astype(float)
+    )
+    # A specified steep segment ending at 3, followed by a flat tail.
+    fits = {
+        k: Candidate(k, np.arange(7) % k, seasonal.values[:k], 0.5 if k == 2 else 0.1, inertia, (), True, 1, 1, ())
+        for k, inertia in enumerate([10.0, 6.0, 2.0, 2.0, 2.0, 2.0, 2.0], start=1)
+    }
+    monkeypatch.setattr("hydrologeez.cluster.experiment.fit_candidates", lambda *args, **kwargs: fits)
+    result = run_experiment(
+        seasonal,
+        tmp_path,
+        "clear",
+        candidates=tuple(fits),
+        selection="elbow",
+        elbow=ElbowSettings(S=0.5, online=True),
+        figures=False,
+    )
+    loaded = load_experiment(result.directory)
+    assert loaded.selected_count == 3
+    assert loaded.elbow == ElbowSettings(S=0.5, online=True)
+    assert loaded.selection_reason == result.selection_reason
+    assert loaded.metadata["versions"]["kneed"]
+    assert (result.directory / "membership.csv").exists()
+    markers: list[list[float]] = []
+
+    def inspect_save(figure: Figure, directory: Path, name: str) -> None:
+        if name == "inertia_diagnostic":
+            markers.append([float(np.asarray(line.get_xdata())[0]) for line in figure.axes[0].lines[1:]])
+
+    monkeypatch.setattr("hydrologeez.cluster.plotting._save", inspect_save)
+    monkeypatch.setattr("hydrologeez.cluster.plotting.render_figures", lambda *args, **kwargs: None)
+    loaded = replace(loaded, coordinates=np.zeros((7, 2)))
+    loaded.plot()
+    loaded.select(selection="silhouette").plot(tmp_path / "comparison")
+    loaded.select(selection="elbow", elbow=ElbowSettings(S=100)).plot(tmp_path / "none")
+    assert markers == [[3.0], [], []]
