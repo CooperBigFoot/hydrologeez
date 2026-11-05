@@ -72,12 +72,14 @@ def render_diagnostics(
     scores: dict[int, float | None],
     inertias: dict[int, float] | None = None,
     elbow_count: int | None = None,
+    *,
+    inertia_label: str = "Mean squared constrained-DTW distance",
 ) -> None:
     """Save retained diagnostic curves; mark only a detected elbow."""
     directory.mkdir(parents=True, exist_ok=True)
     curves = [("cluster_count_diagnostic", "Mean silhouette", scores)]
     if inertias is not None:
-        curves.append(("inertia_diagnostic", "Mean squared constrained-DTW distance", inertias))
+        curves.append(("inertia_diagnostic", inertia_label, inertias))
     with sns.plotting_context("paper", font_scale=1.3), sns.axes_style("white"):
         for name, ylabel, values in curves:
             figure = Figure(figsize=(8, 6), layout="constrained")
@@ -90,6 +92,43 @@ def render_diagnostics(
             axis.set(xlabel="Number of clusters", ylabel=ylabel, xticks=counts)
             sns.despine(ax=axis)
             _save(figure, directory, name)
+
+
+def render_map(directory: Path, labels: IntArray, coordinates: FloatArray, count: int) -> None:
+    """Save a CONUS cluster map using the shared palette and geographic styling."""
+    directory.mkdir(parents=True, exist_ok=True)
+    colors = _cluster_colors(count)
+    with (
+        sns.plotting_context("paper", font_scale=1.3),
+        sns.axes_style(
+            "white",
+            rc={"axes.labelcolor": "black", "xtick.color": "black", "ytick.color": "black", "text.color": "black"},
+        ),
+    ):
+        figure = Figure(figsize=(8, 6), layout="constrained")
+        projection = ccrs.LambertConformal(central_longitude=-96, central_latitude=39)
+        axis = cast(GeoAxes, figure.add_subplot(1, 1, 1, projection=projection))
+        axis.set_extent([-125, -66, 24, 50], crs=ccrs.PlateCarree())
+        axis.coastlines(resolution="110m", linewidth=0.6)
+        axis.add_feature(cfeature.STATES.with_scale("110m"), edgecolor="0.65", linewidth=0.4, facecolor="none")
+        for cluster, color in enumerate(colors):
+            selected = labels == cluster
+            axis.scatter(
+                coordinates[selected, 0],
+                coordinates[selected, 1],
+                color=color,
+                s=20,
+                edgecolors="white",
+                linewidths=0.25,
+                transform=ccrs.PlateCarree(),
+                label=f"Cluster {cluster} (n={int(selected.sum())})",
+                zorder=3,
+            )
+        axis.spines["geo"].set_visible(False)
+        axis.legend(
+            loc="upper center", bbox_to_anchor=(0.5, -0.04), ncol=min(count, 4), fontsize="small", frameon=False
+        )
+        _save(figure, directory, "conus_cluster_map")
 
 
 def render_figures(
@@ -135,30 +174,7 @@ def render_figures(
         if search:
             render_diagnostics(directory, scores)
 
-        figure = Figure(figsize=(8, 6), layout="constrained")
-        projection = ccrs.LambertConformal(central_longitude=-96, central_latitude=39)
-        axis = cast(GeoAxes, figure.add_subplot(1, 1, 1, projection=projection))
-        axis.set_extent([-125, -66, 24, 50], crs=ccrs.PlateCarree())
-        axis.coastlines(resolution="110m", linewidth=0.6)
-        axis.add_feature(cfeature.STATES.with_scale("110m"), edgecolor="0.65", linewidth=0.4, facecolor="none")
-        for cluster, color in enumerate(colors):
-            selected = labels == cluster
-            axis.scatter(
-                coordinates[selected, 0],
-                coordinates[selected, 1],
-                color=color,
-                s=20,
-                edgecolors="white",
-                linewidths=0.25,
-                transform=ccrs.PlateCarree(),
-                label=f"Cluster {cluster} (n={int(selected.sum())})",
-                zorder=3,
-            )
-        axis.spines["geo"].set_visible(False)
-        axis.legend(
-            loc="upper center", bbox_to_anchor=(0.5, -0.04), ncol=min(count, 4), fontsize="small", frameon=False
-        )
-        _save(figure, directory, "conus_cluster_map")
+        render_map(directory, labels, coordinates, count)
 
         limits: list[tuple[float, float]] = []
         for channel in range(len(variables)):
