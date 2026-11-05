@@ -1,4 +1,74 @@
-# Seasonal climate-regime clustering
+# Catchment clustering
+
+## Static catchment attributes
+
+Install with `uv sync --extra cluster`. Select numeric predictors explicitly from
+`CamelsAttributes.table`; there is no default attribute list.
+
+```python
+from pathlib import Path
+from hydrologeez.camels import read_attributes
+from hydrologeez.cluster import run_attribute_experiment, load_attribute_experiment
+
+attributes = read_attributes(Path("prepared/static"))
+table = attributes.table.head(12)  # small example, not a full CAMELS study
+coordinates = table.select("gauge_id", "gauge_lon", "gauge_lat")
+result = run_attribute_experiment(
+    table, Path("results"), "static-small",
+    fields=("elev_mean", "slope_mean", "area_gages2"),
+    k=3, seed=42, coordinates=coordinates,
+)
+print(result.clusters)  # basin IDs remain strings, including leading zeros
+print(result.centroids)  # original units, in selected field order
+
+search = run_attribute_experiment(
+    table, Path("results"), "static-search",
+    fields=("elev_mean", "slope_mean", "area_gages2"),
+    candidates=(2, 3, 4), seed=42, coordinates=coordinates,
+)
+other = load_attribute_experiment(search.directory, count=2)
+other.plot(Path("results/static-search/two-cluster-figures"))
+```
+
+Each selected field is standardized by its population mean and standard deviation
+across the supplied catchments. Ordinary Euclidean K-means gives selected fields
+equal weight after scaling. String/categorical predictors, missing or nonfinite
+selected values, and zero-variance fields fail; nothing is imputed or excluded.
+Invalid-value diagnostics identify fields and basin IDs. Unselected missing fields
+do not matter. `gauge_id`, `gauge_lon` and `gauge_lat` are not predictors.
+Coordinates are a separate labeled table joined by string `gauge_id`; its row
+order need not match the predictors.
+
+Fixed `k` fits only that count. Explicit `candidates` searches use Euclidean
+silhouettes or `selection="elbow"` with the same `ElbowSettings` and no-fallback
+semantics described below. Static inertia is the **sum** of squared Euclidean
+distances to the retained centroids, not mean squared DTW distance.
+`result.select(selection="elbow")` reselects from retained fits without changing
+the saved bundle; `load_attribute_experiment(..., count=k)` chooses a retained
+count manually. No detected elbow means no selected membership or map; diagnostic
+plots and all candidate fits remain available. Neither criterion establishes a
+scientific optimum.
+
+Defaults are k-means++ initialization, three restarts, 50 Lloyd iterations,
+tolerance 1e-6 and seed 0; `seed`, `n_init`, `max_iter` and `tolerance` are explicit
+options. Each candidate retains iteration count and warnings. Centroids are
+arithmetic member means even when the iteration limit stops fitting before
+convergence; no convergence guarantee is implied. `standardized_centroids` and
+`candidates[k].centroids` expose standardized vectors; `centroids` applies the
+fitted inverse scaling to give original units. `fields` defines their column order.
+`values`, `normalized_members`, `mean` and `std` retain the fitted data and scaling.
+
+Named directories reject overwrites. Bundles contain `attributes.npz`, `run.json`,
+`diagnostics.csv` and, when selected, `membership.csv` and `clusters.json`.
+Every candidate label vector and centroid, input value, coordinate, selected field,
+setting, seed and library version survives reload without source data or refitting.
+CSV readers must preserve basin IDs as strings. Use `figures=False` for numerical
+work without coordinates. Plotting failures leave the numerical bundle available.
+Maps use the seasonal workflow's palette and CONUS scope; searches also save
+silhouette and inertia plots. No attribute profiles or interpretation tables are
+generated. Cartopy needs its Natural Earth cache or network access for boundaries.
+
+## Seasonal climate-regime clustering
 
 Install with `uv sync --extra cluster`. This Python workflow groups complete-year
 seasonal climatologies, not coincident weather events or hydrological responses.

@@ -41,6 +41,8 @@ def select_count(
     inertias: dict[int, float],
     selection: Selection,
     elbow: ElbowSettings | None,
+    *,
+    inertia_name: str = "constrained-DTW inertia",
 ) -> tuple[int | None, str]:
     validate_selection(selection, elbow)
     if selection == "silhouette":
@@ -75,4 +77,4 @@ def select_count(
     )
     if detector.elbow is None:
         return None, reason
-    return int(detector.elbow), "Kneedle elbow in constrained-DTW inertia; not a scientific optimum"
+    return int(detector.elbow), f"Kneedle elbow in {inertia_name}; not a scientific optimum"
