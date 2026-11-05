@@ -8,7 +8,7 @@ license-files = ["LICENSE"]
 dependencies = [
     "numba>=0.68.1",
     "numpy>=2.5.4",
-    "pandas>=2.3",
+    "polars>=2.1.0",
 ]
 
 [build-system]

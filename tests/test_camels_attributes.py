@@ -2,8 +2,9 @@
 
 from pathlib import Path
 
-import pandas as pd
+import polars as pl
 import pytest
+from polars.testing import assert_frame_equal
 
 from hydrologeez.camels import prepare_attributes, read_attributes
 
@@ -30,24 +31,28 @@ def test_attributes_preserve_labels_values_metadata_and_resident_selection(tmp_p
     # No raw inputs or daily store are available to the reader.
     for path in raw.iterdir():
         path.unlink()
-    table = read_attributes(output, ["00000002", "01013500"])
-    assert table.index.name == "gauge_id"
-    assert table.index.tolist() == ["00000002", "01013500"]
-    assert table.loc["01013500", "huc_02"] == "01"
-    assert table.loc["01013500", "gauge_name"] == "A River"
-    assert table.loc["01013500", "p_mean"] == 3.12667898699521
-    assert table.loc["01013500", "dom_land_cover"] == "    Mixed Forests"
-    assert pd.isna(table.loc["01013500", "q5"])
-    assert pd.isna(table.loc["01013500", "geol_2nd_class"])
-    assert table.loc["00000002", "q5"] == 0
-    fields = table.attrs["fields"]
+    attributes = read_attributes(output, ["00000002", "01013500"])
+    table = attributes.table
+    assert table["gauge_id"].to_list() == ["00000002", "01013500"]
+    assert table.schema["gauge_id"] == pl.String
+    assert table.schema["q5"] == pl.Float64
+    assert table.schema["geol_2nd_class"] == pl.String
+    first = table.row(1, named=True)
+    assert first["huc_02"] == "01"
+    assert first["gauge_name"] == "A River"
+    assert first["p_mean"] == 3.12667898699521
+    assert first["dom_land_cover"] == "    Mixed Forests"
+    assert first["q5"] is None
+    assert first["geol_2nd_class"] is None
+    assert table["q5"][0] == 0
+    fields = attributes.metadata["fields"]
     assert fields["p_mean"]["unit"] == "mm/day"
     assert fields["soil_depth_statsgo"]["documented_name"] == "soil_depth_statgso"
     assert fields["geol_porostiy"]["source_file"] == "camels_geol.txt"
     assert fields["huc_02"]["dtype"] == "string"
     for path in output.iterdir():
         path.unlink()
-    assert table.loc["00000002", "gauge_name"] == "B River"
+    assert table.filter(pl.col("gauge_id") == "00000002")["gauge_name"].item() == "B River"
 
 
 @pytest.mark.parametrize("ids", [[], ["01013500", "01013500"], ["unknown"]])
@@ -83,9 +88,14 @@ def test_attribute_rows_align_with_daily_selection(tmp_path: Path) -> None:
         path.write_text(path.read_text().replace("01013500", "00000001"))
     output = tmp_path / "attributes"
     prepare_attributes(static_raw, output)
-    table = read_attributes(output, selected.ids)
-    assert tuple(table.index) == selected.ids
-    assert table["gauge_name"].tolist() == ["B River", "A River"]
+    table = read_attributes(output, selected.ids).table
+    assert tuple(table["gauge_id"]) == selected.ids
+    assert table["gauge_name"].to_list() == ["B River", "A River"]
+    resident = read_attributes(output).table
+    for path in output.iterdir():
+        path.unlink()
+    aligned = pl.DataFrame({"gauge_id": selected.ids}).join(resident, on="gauge_id", how="left", maintain_order="left")
+    assert_frame_equal(aligned, table)
 
 
 def test_local_attributes_match_all_source_identities_fields_and_values(tmp_path: Path) -> None:
@@ -96,8 +106,10 @@ def test_local_attributes_match_all_source_identities_fields_and_values(tmp_path
         pytest.skip("Local CAMELS-US attributes are not available")
     output = tmp_path / "attributes"
     prepare_attributes(raw, output)
-    table = read_attributes(output)
-    assert table.shape == (671, 59)
+    attributes = read_attributes(output)
+    table = attributes.table
+    assert table.shape == (671, 60)
+    by_id = {row["gauge_id"]: row for row in table.iter_rows(named=True)}
     strings = {
         "huc_02",
         "gauge_name",
@@ -111,22 +123,22 @@ def test_local_attributes_match_all_source_identities_fields_and_values(tmp_path
     for path in raw.glob("camels_*.txt"):
         with path.open(newline="") as source:
             rows = list(csv.DictReader(source, delimiter=";"))
-        assert set(table.index) == {row["gauge_id"] for row in rows}
+        assert set(table["gauge_id"]) == {row["gauge_id"] for row in rows}
         for row in rows:
             for field, value in row.items():
                 if field == "gauge_id":
                     continue
                 fields.add(field)
-                actual = table.loc[row["gauge_id"], field]
+                actual = by_id[row["gauge_id"]][field]
                 if value == "NA":
-                    assert pd.isna(actual)
+                    assert actual is None
                 else:
                     assert actual == (value if field in strings else float(value))
-    assert fields == set(table.columns)
-    assert table.loc["01013500", "huc_02"] == "01"
-    assert table.loc["01013500", "dom_land_cover"] == "    Mixed Forests"
-    assert table.loc["01013500", "geol_porostiy"] == 0.1714
-    assert pd.isna(table.loc["03281100", "q_mean"])
-    assert table.attrs["fields"]["zero_q_freq"]["unit"] == "%"
-    assert table.attrs["fields"]["geol_permeability"]["unit"] == "m2"
-    assert "log10" in table.attrs["fields"]["geol_permeability"]["description"]
+    assert fields == set(table.columns) - {"gauge_id"}
+    assert by_id["01013500"]["huc_02"] == "01"
+    assert by_id["01013500"]["dom_land_cover"] == "    Mixed Forests"
+    assert by_id["01013500"]["geol_porostiy"] == 0.1714
+    assert by_id["03281100"]["q_mean"] is None
+    assert attributes.metadata["fields"]["zero_q_freq"]["unit"] == "%"
+    assert attributes.metadata["fields"]["geol_permeability"]["unit"] == "m2"
+    assert "log10" in attributes.metadata["fields"]["geol_permeability"]["description"]

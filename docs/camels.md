@@ -92,19 +92,23 @@ uv run python -m scripts.camels_attributes --raw data/camels-us/raw \
 
 ```python
 from pathlib import Path
+import polars as pl
 from hydrologeez.camels import Camels, read_attributes
 
 attributes = read_attributes(Path("data/camels-us/attributes"))
-# A resident pandas DataFrame: 671 gauge_id rows and 59 source-named columns.
-print(attributes.loc["01013500", ["gauge_name", "p_mean", "geol_porostiy"]])
-print(attributes.attrs["fields"]["p_mean"])  # description, unit, source, references
+# A resident Polars DataFrame: 671 rows, gauge_id plus 59 source-named columns.
+print(attributes.table.filter(pl.col("gauge_id") == "01013500").select("gauge_name", "p_mean", "geol_porostiy"))
+print(attributes.metadata["fields"]["p_mean"])  # description, unit, source, references
 
 store = Camels(Path("data/camels-us/prepared"))
 selected = store.select(["01022500", "01013500"], "1990-01-01", "2000-01-01")
-aligned = attributes.loc[list(selected.ids)]  # reuse without reading storage
-assert tuple(aligned.index) == selected.ids
+# Reuse resident rows in daily selection order, without reading storage:
+aligned = pl.DataFrame({"gauge_id": selected.ids}).join(
+    attributes.table, on="gauge_id", how="left", maintain_order="left"
+)
+assert tuple(aligned["gauge_id"]) == selected.ids
 # Or materialize only those rows through the reader:
-aligned = read_attributes(Path("data/camels-us/attributes"), selected.ids)
+aligned_attributes = read_attributes(Path("data/camels-us/attributes"), selected.ids)
 ```
 
 `attributes.json` stores typed columns, string identities, and field metadata.
@@ -112,8 +116,13 @@ The reader loads this small table only, not raw sources or daily records. It
 returns rows in the requested order and rejects unknown, duplicate, or empty
 selections. Without IDs it returns all basins in sorted gauge-ID order.
 
-Numeric columns use pandas nullable `Float64`; string columns use `string`.
-Source `NA` becomes JSON null and pandas `NA`, including missing geological
+`read_attributes` now returns `CamelsAttributes`, replacing the newly introduced
+pandas return value. Use `.table` for the Polars DataFrame and `.metadata` instead
+of pandas `.attrs`; `gauge_id` is an explicit column, not an index. Existing JSON
+stores remain readable without rebuilding. There is no pandas compatibility API.
+
+Numeric columns use Polars `Float64`; string columns use `String`.
+Source `NA` becomes JSON null and Polars null, including missing geological
 categories. Zero remains zero. Gauge IDs and `huc_02` retain leading zeros;
 names and categories retain their exact source text, including land-cover
 leading spaces. No scaling, imputation, category encoding, or clipping occurs.

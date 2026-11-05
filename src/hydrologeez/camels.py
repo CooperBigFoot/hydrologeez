@@ -9,10 +9,10 @@ from dataclasses import asdict, dataclass
 from datetime import date
 from importlib.resources import files
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import numpy as np
-import pandas as pd
+import polars as pl
 from numpy.typing import NDArray
 
 from hydrologeez.hbv_light import Forcing
@@ -60,29 +60,48 @@ def prepare_attributes(raw: Path, output: Path) -> None:
     (output / "attributes.json").write_text(text)
 
 
-def read_attributes(directory: Path, ids: Sequence[str] | None = None) -> pd.DataFrame:
-    """Read a reusable labeled table, optionally in caller basin order.
+class AttributeMetadata(TypedDict):
+    """Source documentation and per-field CAMELS interpretation."""
 
-    Rows are string gauge IDs; columns retain source names. DataFrame.attrs
-    carries field descriptions, units, provenance and source missing semantics.
+    source: str
+    documentation: str
+    citation: str
+    missing_value: str
+    fields: dict[str, dict[str, str]]
+
+
+@dataclass(frozen=True)
+class CamelsAttributes:
+    """Resident static attributes with explicit gauge_id and source metadata."""
+
+    table: pl.DataFrame
+    metadata: AttributeMetadata
+
+
+def read_attributes(directory: Path, ids: Sequence[str] | None = None) -> CamelsAttributes:
+    """Read a reusable Polars table, optionally in caller basin order.
+
+    The gauge_id column holds string identities. Metadata carries field
+    descriptions, units, provenance and source missing semantics.
     This reads only attributes.json, never raw tables or daily records.
     """
     payload = json.loads((directory / "attributes.json").read_text())
     if payload["format"] != 1:
         raise ValueError("Unsupported CAMELS attributes format")
-    selected = payload["ids"] if ids is None else list(ids)
-    if not selected or len(set(selected)) != len(selected) or not set(selected) <= set(payload["ids"]):
+    stored_ids: list[str] = payload["ids"]
+    selected = stored_ids if ids is None else list(ids)
+    if not selected or len(set(selected)) != len(selected) or not set(selected) <= set(stored_ids):
         raise ValueError("Select unique nonempty known CAMELS basins")
-    metadata = payload["metadata"]
-    table = pd.DataFrame(
-        {
-            field: pd.array(values, dtype=metadata["fields"][field]["dtype"])
-            for field, values in payload["columns"].items()
+    metadata: AttributeMetadata = payload["metadata"]
+    table = pl.DataFrame(
+        {"gauge_id": stored_ids, **payload["columns"]},
+        schema={
+            field: pl.String if metadata["fields"][field]["dtype"] == "string" else pl.Float64
+            for field in ("gauge_id", *payload["columns"])
         },
-        index=pd.Index(payload["ids"], name="gauge_id", dtype="string"),
     )
-    table.attrs = metadata
-    return table.loc[selected].copy()
+    positions = {gauge: index for index, gauge in enumerate(stored_ids)}
+    return CamelsAttributes(table[[positions[gauge] for gauge in selected]], metadata)
 
 
 def prepare_forcing(rows: Array, latitude: float) -> tuple[NDArray[np.int64], Array]:
