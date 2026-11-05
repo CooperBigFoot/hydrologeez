@@ -52,9 +52,17 @@ the existing silhouette/inertia diagnostic plots where applicable. An unselected
 search retains diagnostics but has no selected membership or cluster map until a
 count is chosen.
 
-Do not produce attribute profile figures or attribute-summary tables. No classifier,
-new-basin prediction interface, scientific study, automatic attribute selection,
-additional clustering methods or generic clustering framework is requested.
+Retain and expose each cluster's K-means centroid: the arithmetic mean of its
+members in standardized attribute space. Also expose its inverse-transformed
+attribute vector in original units, with the selected field order preserved.
+These representative vectors are the static-feature counterpart of the DTW
+barycenters, not DTW barycenters themselves. Persist centroids for retained
+candidate fits and preserve them through reload and count selection.
+
+Do not produce attribute profile figures or additional interpretive attribute-summary
+tables. The centroid vectors above are required model outputs, not excluded summaries.
+No classifier, new-basin prediction interface, scientific study, automatic attribute
+selection, additional clustering methods or generic clustering framework is requested.
 
 ## Repository context and implementation latitude
 
