@@ -2,8 +2,8 @@
 
 Calibration reuses [prepared CAMELS selections](camels.md) and the current HBV
 runtime. It keeps bounded candidate discharge in memory, not candidate files.
-One candidate has 13 parameters shared across a basin's zones; different basins
-are calibrated separately. No rainfall, observation units, or QC flags change.
+One candidate has 13 parameters shared across a basin's zones. Calibrate basins
+separately or share a vector across explicitly selected basins. No rainfall, observation units, or QC flags change.
 
 ```python
 from pathlib import Path
@@ -108,3 +108,71 @@ The public result is an in-memory dataclass, not a new storage format. Retain
 input basin identity, dates, bounds, settings and code/environment versions with
 any exported results. No automatic campaign scheduling, checkpoints, or inference
 of statistically independent/probabilistic ensemble members is provided.
+
+
+## Shared parameters across basins
+
+Use `JointEvaluator` with explicit basin IDs and the same `CandidateEvaluator`
+inputs as above. Each basin retains its own forcing, warm-up, empty initial
+stores, observation mask, and scoring periods. Only the parameter vector is shared.
+
+```python
+from hydrologeez.calibration import JointEvaluator, calibrate_joint
+
+basin_ids = ["01013500", "01022500"]
+inputs = Camels(Path("data/camels-us/prepared")).select(basin_ids, "1980-01-01", "2015-01-01")
+joint = JointEvaluator(
+    {
+        basin_id: CandidateEvaluator(
+            inputs.forcing,
+            inputs.dates,
+            inputs.discharge_mm_day[:, index],
+            index,
+            Period("1981-10-01", "2000-10-01"),
+            validation=Period("2000-10-01", "2015-01-01"),
+        )
+        for index, basin_id in enumerate(basin_ids)
+    }
+)
+ensemble = calibrate_joint(
+    joint,
+    seeds=[11, 22],
+    objectives=("nse", "rmse"),
+    population_size=20,
+    generations=10,
+    retain=3,
+    batch_size=8,
+    report=("training", "validation"),
+)
+solution = ensemble.solutions[0]  # when at least one candidate has valid objectives
+print(solution.losses)  # aggregated training losses, in ensemble.objectives order
+print(solution.scores["01013500"]["validation"]["rmse"])  # raw RMSE, not normalized
+```
+
+For each objective, convert each basin's full-period raw score using
+[`objective_loss()`](metrics.md): efficiencies and correlations become `1 - score`,
+`alpha` and `beta` become `abs(score - 1)`, and signed biases (including
+`beta_nse`) become `abs(score)`. Error metrics are minimized directly. Opposite
+biases therefore cannot cancel. RMSE is then divided by that basin's mean masked
+training observation; MSE is divided by its square. These fixed, observation-only
+means are stored in `ensemble.training_means`. Raw diagnostics are unchanged.
+`joint.losses(records, objectives, period="validation")` uses those same training
+means, never validation means.
+
+Aggregate each objective separately as a weighted mean of basin losses. Weights
+default to equal values. Supply, for example,
+`weights={"01013500": 1.0, "01022500": 2.0}` to `JointEvaluator` for explicit
+positive finite weights; the normalized weights are stored in `ensemble.weights`.
+No weighting by record length, area, or discharge magnitude is applied. Other
+metrics keep their existing scales, including peak timing in days.
+
+Observation-side incompatibilities for selected training objectives raise before
+search (for example, constant observations for correlation or zero training mean
+for normalized errors). A candidate with an undefined objective in any basin is
+invalid, not scored using fewer basins. Diagnostic-only undefined values may be
+`NaN`. Reports keep basin IDs and raw metrics alongside each shared parameter
+vector, its run index and seed, and aggregate training losses. Simulation holds
+one basin's candidate batch at a time, not all basin/candidate/time combinations.
+
+Optimizing the aggregate does **not** guarantee acceptable performance in every
+basin. This is research tooling, not evidence of regionalization or generalization.

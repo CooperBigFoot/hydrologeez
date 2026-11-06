@@ -1,5 +1,6 @@
 """Seeded HBV ensemble calibration using reusable daily inputs."""
 
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import date
 
@@ -165,6 +166,61 @@ class CandidateEvaluator:
         return scores
 
 
+class JointEvaluator:
+    """Explicit basin IDs mapped to independent evaluators; only parameters are shared.
+
+    Simulate one basin at a time in candidate batches. Diagnostics retain full-period
+    raw scores; losses use fixed masked training means for RMSE and MSE.
+    """
+
+    def __init__(self, basins: dict[str, CandidateEvaluator], *, weights: dict[str, float] | None = None) -> None:
+        if not basins:
+            raise ValueError("Select at least one basin")
+        self.basins = dict(basins)
+        weights = dict.fromkeys(basins, 1.0) if weights is None else weights
+        values = np.array(list(weights.values()), dtype=np.float64)
+        if weights.keys() != basins.keys() or not np.isfinite(values).all() or np.any(values <= 0):
+            raise ValueError("Supply positive finite weights for every selected basin")
+        # Scale before summing to avoid overflow for large finite weights.
+        scaled = {name: weight / float(values.max()) for name, weight in weights.items()}
+        total = sum(scaled.values())
+        self.weights = {name: weight / total for name, weight in scaled.items()}
+        self.training_means = {
+            name: float(basin.observed[basin.masks["training"]].mean()) for name, basin in basins.items()
+        }
+
+    def scores(
+        self, candidates: Array, *, batch_size: int, periods: tuple[str, ...] = ("training",)
+    ) -> list[dict[str, dict[str, dict[str, float]]]]:
+        """Raw diagnostics indexed by candidate, basin ID, period, and metric."""
+        result: list[dict[str, dict[str, dict[str, float]]]] = [{} for _ in candidates]
+        for name, basin in self.basins.items():
+            for record, scores in zip(
+                result, basin.scores(candidates, batch_size=batch_size, periods=periods), strict=True
+            ):
+                record[name] = scores
+        return result
+
+    def losses(
+        self,
+        scores: list[dict[str, dict[str, dict[str, float]]]],
+        objectives: tuple[str, ...],
+        *,
+        period: str = "training",
+    ) -> Array:
+        """Weighted mean of converted basin losses; no basin is omitted."""
+        result = np.zeros((len(scores), len(objectives)))
+        for row, record in enumerate(scores):
+            for column, metric in enumerate(objectives):
+                for name, weight in self.weights.items():
+                    loss = objective_loss(metric, record[name][period][metric])
+                    if metric in ("rmse", "mse"):
+                        denominator = self.training_means[name] ** (2 if metric == "mse" else 1)
+                        loss = loss / denominator if denominator > 0 else float("inf")
+                    result[row, column] += weight * loss
+        return result
+
+
 @dataclass(frozen=True)
 class Solution:
     """One retained model, with run identity and raw (not minimized) scores."""
@@ -192,6 +248,55 @@ class Ensemble:
     coverage: dict[str, dict[int, int]]
 
 
+def _validate_search(
+    seeds: list[int],
+    objectives: tuple[str, ...],
+    population_size: int,
+    generations: int,
+    retain: int,
+    batch_size: int,
+    bounds: Array,
+) -> None:
+    if not objectives or any(name not in OBJECTIVES for name in objectives):
+        raise ValueError("Choose supported objective metrics")
+    if not seeds or len(set(seeds)) != len(seeds) or any(seed < 0 for seed in seeds):
+        raise ValueError("Supply unique nonnegative independent run seeds")
+    if retain < 1 or batch_size < 1 or population_size < 2 or population_size % 2 or generations < 0:
+        raise ValueError("Positive retention/batch, even population >=2 and nonnegative generations required")
+    if bounds.shape != (13, 2) or not np.isfinite(bounds).all() or np.any(bounds[:, 0] >= bounds[:, 1]):
+        raise ValueError("Bounds must have shape (13,2) with finite increasing intervals")
+
+
+def _search(
+    evaluate_batch: Callable[[Array], Array],
+    seeds: list[int],
+    objectives: tuple[str, ...],
+    population_size: int,
+    generations: int,
+    retain: int,
+    bounds: Array,
+) -> Iterator[tuple[Run, Array]]:
+    for run, seed in enumerate(seeds):
+        population = evolve(evaluate_batch, bounds, population_size, generations, seed)
+        if len(objectives) == 1:
+            indices = [int(np.argmin(population.losses[:, 0]))]
+        else:
+            indices = sorted(
+                np.flatnonzero(population.rank == 0).tolist(), key=lambda i: -float(population.crowding[i])
+            )
+        evaluations = population_size * (generations + 1)
+        selected: list[int] = []
+        seen: set[tuple[float, ...]] = set()
+        for index in indices:
+            key = tuple(float(v) for v in population.parameters[index])
+            if np.isfinite(population.losses[index]).all() and key not in seen:
+                selected.append(index)
+                seen.add(key)
+                if len(selected) == retain:
+                    break
+        yield Run(run, seed, evaluations, len(selected)), population.parameters[selected]
+
+
 def calibrate(
     evaluator: CandidateEvaluator,
     *,
@@ -214,16 +319,9 @@ def calibrate(
     zero models rather than padding an ensemble. Every selected diagnostic is
     reported independently of optimizer objectives (currently the full catalogue).
     """
-    if not objectives or any(name not in OBJECTIVES for name in objectives):
-        raise ValueError("Choose supported objective metrics")
-    if not seeds or len(set(seeds)) != len(seeds) or any(seed < 0 for seed in seeds):
-        raise ValueError("Supply unique nonnegative independent run seeds")
-    if retain < 1 or batch_size < 1 or population_size < 2 or population_size % 2 or generations < 0:
-        raise ValueError("Positive retention/batch, even population >=2 and nonnegative generations required")
+    _validate_search(seeds, objectives, population_size, generations, retain, batch_size, bounds)
     if not report or any(period not in evaluator.masks for period in report):
         raise ValueError("Choose configured reporting periods")
-    if bounds.shape != (13, 2) or not np.isfinite(bounds).all() or np.any(bounds[:, 0] >= bounds[:, 1]):
-        raise ValueError("Bounds must have shape (13,2) with finite increasing intervals")
     lower, upper = bounds[:, 0], bounds[:, 1]
     # Validate physical domains before entering optimization, including custom bounds.
     for endpoint in (lower, upper):
@@ -236,33 +334,111 @@ def calibrate(
 
     solutions: list[Solution] = []
     runs: list[Run] = []
-    for run, seed in enumerate(seeds):
-        population = evolve(evaluate_batch, bounds, population_size, generations, seed)
-        if len(objectives) == 1:
-            indices = [int(np.argmin(population.losses[:, 0]))]
-        else:
-            indices = sorted(
-                np.flatnonzero(population.rank == 0).tolist(), key=lambda i: -float(population.crowding[i])
-            )
-        evaluations = population_size * (generations + 1)
-        selected: list[int] = []
-        seen: set[tuple[float, ...]] = set()
-        for index in indices:
-            key = tuple(float(v) for v in population.parameters[index])
-            if np.isfinite(population.losses[index]).all() and key not in seen:
-                selected.append(index)
-                seen.add(key)
-                if len(selected) == retain:
-                    break
-        if selected:
-            candidates = population.parameters[selected]
+    for run_info, candidates in _search(
+        evaluate_batch, seeds, objectives, population_size, generations, retain, bounds
+    ):
+        if len(candidates):
             reports = evaluator.scores(
                 candidates, batch_size=batch_size, periods=tuple(dict.fromkeys(("training", *report)))
             )
             for candidate, scores in zip(candidates, reports, strict=True):
                 objective_values = tuple(scores["training"][name] for name in objectives)
                 solutions.append(
-                    Solution(run, seed, np.asarray(candidate).copy(), objective_values, {p: scores[p] for p in report})
+                    Solution(
+                        run_info.run,
+                        run_info.seed,
+                        np.asarray(candidate).copy(),
+                        objective_values,
+                        {p: scores[p] for p in report},
+                    )
                 )
-        runs.append(Run(run, seed, evaluations, len(selected)))
+        runs.append(run_info)
     return Ensemble(tuple(solutions), tuple(runs), objectives, evaluator.coverage)
+
+
+@dataclass(frozen=True)
+class JointSolution:
+    """Shared parameter vector identified by run, seed, and its parameter values."""
+
+    run: int
+    seed: int
+    parameters: Array
+    losses: tuple[float, ...]
+    scores: dict[str, dict[str, dict[str, float]]]
+
+
+@dataclass(frozen=True)
+class JointEnsemble:
+    solutions: tuple[JointSolution, ...]
+    runs: tuple[Run, ...]
+    objectives: tuple[str, ...]
+    weights: dict[str, float]
+    training_means: dict[str, float]
+    coverage: dict[str, dict[str, dict[int, int]]]
+
+
+def calibrate_joint(
+    evaluator: JointEvaluator,
+    *,
+    seeds: list[int],
+    objectives: tuple[str, ...],
+    population_size: int = 100,
+    generations: int = 100,
+    retain: int = 1,
+    batch_size: int = 64,
+    report: tuple[str, ...] = ("training",),
+    bounds: Array = SEARCH_BOUNDS,
+) -> JointEnsemble:
+    """Seeded GA/NSGA-II with separate weighted-mean basin-loss objectives.
+
+    Search settings and retention match ``calibrate``. Every basin must have valid
+    training losses for every objective. Undefined diagnostic-only scores remain NaN.
+    """
+    _validate_search(seeds, objectives, population_size, generations, retain, batch_size, bounds)
+    for name, basin in evaluator.basins.items():
+        if not report or any(period not in basin.masks for period in report):
+            raise ValueError(f"Choose configured reporting periods for {name}")
+        # Perfect agreement exposes observation-only undefined metrics, including
+        # insufficient peak windows and constant/too-short observation records.
+        observed_scores = basin.observed[basin.masks["training"]]
+        dates = (basin.dates[basin.masks["training"]] - date(1970, 1, 1).toordinal()).astype("datetime64[D]")
+        reference = evaluate(observed_scores, observed_scores, dates=dates)
+        for metric in objectives:
+            if not np.isfinite(reference[metric]) or (
+                metric in ("rmse", "mse") and evaluator.training_means[name] <= 0
+            ):
+                raise ValueError(f"Basin {name} has incompatible training observations for {metric}")
+        for endpoint in (bounds[:, 0], bounds[:, 1]):
+            parameters, initial = basin.inputs(endpoint[None, :])
+            simulate(basin.forcing, parameters, initial, stop=0)
+
+    def evaluate_batch(candidates: Array) -> Array:
+        return evaluator.losses(evaluator.scores(candidates, batch_size=batch_size), objectives)
+
+    solutions: list[JointSolution] = []
+    runs: list[Run] = []
+    for run, candidates in _search(evaluate_batch, seeds, objectives, population_size, generations, retain, bounds):
+        if len(candidates):
+            records = evaluator.scores(
+                candidates, batch_size=batch_size, periods=tuple(dict.fromkeys(("training", *report)))
+            )
+            losses = evaluator.losses(records, objectives)
+            for candidate, record, loss in zip(candidates, records, losses, strict=True):
+                solutions.append(
+                    JointSolution(
+                        run.run,
+                        run.seed,
+                        np.asarray(candidate).copy(),
+                        tuple(float(v) for v in np.asarray(loss)),
+                        {name: {period: scores[period] for period in report} for name, scores in record.items()},
+                    )
+                )
+        runs.append(run)
+    return JointEnsemble(
+        tuple(solutions),
+        tuple(runs),
+        objectives,
+        dict(evaluator.weights),
+        dict(evaluator.training_means),
+        {name: basin.coverage for name, basin in evaluator.basins.items()},
+    )
