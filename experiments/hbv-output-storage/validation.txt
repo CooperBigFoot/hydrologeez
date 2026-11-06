@@ -1,0 +1,17 @@
+Test-first evidence:
+- Initial selected-output test failed with ModuleNotFoundError for hydrologeez.hbv_light.output after project environment setup was corrected.
+- First failure/resume test caught tuple/list metadata comparison preventing valid resumes; corrected JSON-normalized metadata.
+- Per-batch file-layout test failed (zero discharge.npy at batch root) before replacing per-window files.
+- Existing numerical tests unchanged; all-variable expectations use monolithic simulate histories, not output helper extraction.
+
+Final validation (2026-11-05, implementation worktree):
+NUMBA_NUM_THREADS=1 uv run --group experiments --group acquisition pytest -q
+101 passed in 3.84s
+uv run ruff check .
+All checks passed!
+uv run ruff format --check .
+55 files already formatted
+uv run ty check
+All checks passed!
+
+Review/target merge verification remain the parent agent's responsibility. No VM validation performed.

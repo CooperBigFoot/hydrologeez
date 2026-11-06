@@ -24,7 +24,7 @@ Array = NDArray[np.float64]
 def _day(
     forcing: Array, area: Array, parameters: Array, response: Array, routing: Array, zone: Array, basin: Array
 ) -> tuple[Array, Array]:
-    """Mutate end-of-day memory; report zone I,R,A,P*,m,f,r,o and basin Q,G,D,q0,q1,q2."""
+    """Mutate end-of-day memory; report zone I,R,A,P*,m,f,r,o and basin Q,G,D,q1,q2."""
     flux = np.empty((len(area), 8))
     recharge = 0.0
     for z in range(len(area)):
@@ -36,10 +36,10 @@ def _day(
         zone[z] = s, liquid, moisture
         flux[z] = soil_input, r, evaporation, corrected, melt, freeze, initial_recharge, overflow
         recharge += area[z] * r
-    perc, uzl, k0, k1, k2 = response
-    basin[0], basin[1], generated, d, q0, q1, q2 = groundwater(recharge, basin[0], basin[1], perc, uzl, k0, k1, k2)
+    perc, alpha, k1, k2 = response
+    basin[0], basin[1], generated, d, q1, q2 = groundwater(recharge, basin[0], basin[1], perc, alpha, k1, k2)
     outlet = route(generated, routing, basin[2:])
-    return flux, np.array([outlet, generated, d, q0, q1, q2])
+    return flux, np.array([outlet, generated, d, q1, q2])
 
 
 @dataclass(frozen=True)
@@ -61,7 +61,7 @@ class Parameters:
 
     basin_index [simulation] selects shared forcing. zone [packed simulation
     zone, 8] contains TT, CFMAX, CFR, CWH, SCF, FC, BETA, LP. groundwater
-    [simulation, 5] contains PERC, UZL, K_0, K_1, K_2. maxbas [simulation]
+    [simulation, 4] contains PERC, Alpha, K_1, K_2. maxbas [simulation]
     gives routing duration in days. Simulation zone counts follow basin_index.
     """
 
@@ -89,7 +89,7 @@ class History:
 
     Arrays have day first, then the same packed axes as Memory. zone_flux has
     I, R, A, corrected P, melt, refreeze, raw recharge, overflow in its final
-    axis. basin_flux has Q, G, D, q0, q1, q2. All amounts are mm; zone quantities
+    axis. basin_flux has Q, G, D, q1, q2. All amounts are mm; zone quantities
     use zone area, groundwater/routing quantities use basin area.
     """
 
@@ -144,7 +144,7 @@ def _simulate(
     gh = np.empty((recorded, len(index), 2))
     rh = np.empty((recorded, len(routing)))
     zf = np.empty((recorded, len(zone), 8))
-    bf = np.empty((recorded, len(index), 6))
+    bf = np.empty((recorded, len(index), 5))
     for i in prange(len(index)):
         b = index[i]
         fs, fe = forcing_offsets[b], forcing_offsets[b + 1]
@@ -221,7 +221,7 @@ def _validate(forcing: Forcing, parameters: Parameters, initial: Memory, start: 
     n = len(index)
     z = int(np.diff(offsets)[index].sum())
     _array("zone parameters", parameters.zone, (z, 8))
-    _array("groundwater parameters", parameters.groundwater, (n, 5))
+    _array("groundwater parameters", parameters.groundwater, (n, 4))
     _array("MAXBAS", parameters.maxbas, (n,))
     p = parameters.zone
     if (

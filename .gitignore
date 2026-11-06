@@ -8,3 +8,7 @@ htmlcov/
 dist/
 .env
 .DS_Store
+.hbv-input-data/
+data/camels-us/prepared/
+
+/data/

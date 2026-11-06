@@ -1,0 +1,222 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 820" width="100%" height="100%" style="background-color: #fcfcfc; font-family: &#39;Segoe UI&#39;, -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;">
+  <defs>
+    <!-- Arrowheads -->
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="3.5" markerHeight="3.5" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#2b83c6" />
+    </marker>
+    <marker id="arrow-light-blue" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="3.5" markerHeight="3.5" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#82a9c9" />
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="3.5" markerHeight="3.5" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#77966d" />
+    </marker>
+
+    <!-- Gradients -->
+    <linearGradient id="snow-bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f2f8fd" />
+      <stop offset="100%" stop-color="#dfeef9" />
+    </linearGradient>
+    <linearGradient id="snow-fill" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#c3e0f7" />
+      <stop offset="100%" stop-color="#d8ecfc" />
+    </linearGradient>
+    <linearGradient id="soil-bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#e3d6be" />
+      <stop offset="100%" stop-color="#dcd0b8" />
+    </linearGradient>
+    <linearGradient id="ugw-fill" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#8ec4eb" />
+      <stop offset="100%" stop-color="#a2d2f4" />
+    </linearGradient>
+    <linearGradient id="lgw-fill" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#539cd1" />
+      <stop offset="100%" stop-color="#62aae0" />
+    </linearGradient>
+    <linearGradient id="routing-tri" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#4e8ec2" />
+      <stop offset="100%" stop-color="#8eb8db" />
+    </linearGradient>
+    <linearGradient id="q-curve" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#94c6ec" />
+      <stop offset="100%" stop-color="#dfeef9" />
+    </linearGradient>
+
+    <!-- Clip Paths -->
+    <clipPath id="snow-clip">
+      <rect x="0" y="0" width="166" height="88" rx="8" />
+    </clipPath>
+    <clipPath id="soil-clip">
+      <rect x="0" y="0" width="176" height="72" rx="8" />
+    </clipPath>
+    <clipPath id="gw-clip">
+      <rect x="0" y="0" width="276" height="90" rx="8" />
+    </clipPath>
+
+    <!-- Reusable Zone Component -->
+    <g id="zone-template">
+      <!-- P & T Labels -->
+      <text x="56" y="55" font-size="22" font-weight="700" fill="#2c353d" text-anchor="middle">P</text>
+      <text x="110" y="55" font-size="22" font-weight="700" fill="#2c353d" text-anchor="middle">T</text>
+
+      <!-- P & T Arrows -->
+      <line x1="56" y1="67" x2="56" y2="108" stroke="#2b83c6" stroke-width="4" marker-end="url(#arrow-blue)" />
+      <line x1="110" y1="67" x2="110" y2="108" stroke="#82a9c9" stroke-width="4" marker-end="url(#arrow-light-blue)" />
+
+      <!-- Snow Box -->
+      <g transform="translate(0, 118)">
+        <rect x="0" y="0" width="166" height="88" rx="8" fill="url(#snow-bg)" />
+        <g clip-path="url(#snow-clip)">
+          <!-- Back wave -->
+          <path d="M 0 28 Q 20 18, 41 26 T 83 25 T 125 27 T 166 24 L 166 88 L 0 88 Z" fill="#e1f0fc" />
+          <!-- Front wave -->
+          <path d="M 0 32 Q 25 24, 50 32 T 105 32 T 166 28 L 166 88 L 0 88 Z" fill="url(#snow-fill)" />
+        </g>
+        <rect x="0" y="0" width="166" height="88" rx="8" fill="none" stroke="#82add1" stroke-width="2" />
+        <text x="83" y="60" font-size="19" font-weight="600" fill="#2c353d" text-anchor="middle">Snow</text>
+      </g>
+
+      <!-- Snow to Soil Arrow -->
+      <line x1="83" y1="206" x2="83" y2="274" stroke="#2b83c6" stroke-width="4" marker-end="url(#arrow-blue)" />
+
+      <!-- E Arrow & Label -->
+      <path d="M 171 312 L 182 312 Q 191 312, 191 302 L 191 224" fill="none" stroke="#77966d" stroke-width="3.5" marker-end="url(#arrow-green)" />
+      <text x="191" y="206" font-size="21" font-weight="700" fill="#2c353d" text-anchor="middle">E</text>
+
+      <!-- Soil Box -->
+      <g transform="translate(-5, 284)">
+        <!-- Grass tufts -->
+        <path d="M 28 2 C 23 -8, 19 -11, 16 -12 C 20 -8, 22 -3, 24 2 Z" fill="#82a467" />
+        <path d="M 31 2 C 29 -9, 28 -14, 27 -16 C 30 -10, 31 -4, 33 2 Z" fill="#82a467" />
+        <path d="M 35 2 C 37 -7, 41 -11, 44 -13 C 40 -7, 38 -2, 37 2 Z" fill="#82a467" />
+        <path d="M 38 2 C 42 -4, 46 -6, 50 -7 C 45 -3, 42 0, 40 2 Z" fill="#82a467" />
+
+        <path d="M 138 2 C 133 -6, 129 -9, 126 -10 C 130 -6, 132 -2, 134 2 Z" fill="#82a467" />
+        <path d="M 141 2 C 139 -8, 138 -13, 137 -15 C 140 -9, 141 -4, 143 2 Z" fill="#82a467" />
+        <path d="M 145 2 C 147 -7, 151 -11, 154 -13 C 150 -7, 148 -2, 147 2 Z" fill="#82a467" />
+        <path d="M 148 2 C 152 -4, 156 -6, 160 -7 C 155 -3, 152 0, 150 2 Z" fill="#82a467" />
+
+        <rect x="0" y="0" width="176" height="72" rx="8" fill="url(#soil-bg)" />
+        <g clip-path="url(#soil-clip)">
+          <!-- Green top soil layer -->
+          <path d="M 0 0 L 176 0 L 176 22 Q 154 22, 143 18 Q 130 14, 115 21 Q 88 23, 62 21 Q 45 14, 32 18 Q 20 22, 0 22 Z" fill="#92b275" />
+          <!-- Soil texture dots -->
+          <circle cx="25" cy="38" r="2" fill="#cbbba0" />
+          <circle cx="48" cy="56" r="2.2" fill="#cbbba0" />
+          <circle cx="72" cy="34" r="1.8" fill="#cbbba0" />
+          <circle cx="115" cy="36" r="2" fill="#cbbba0" />
+          <circle cx="136" cy="54" r="2.3" fill="#cbbba0" />
+          <circle cx="155" cy="40" r="1.8" fill="#cbbba0" />
+          <circle cx="92" cy="60" r="2" fill="#cbbba0" />
+        </g>
+        <rect x="0" y="0" width="176" height="72" rx="8" fill="none" stroke="#968c6e" stroke-width="2" />
+        <text x="88" y="47" font-size="19" font-weight="600" fill="#2c353d" text-anchor="middle">Soil</text>
+      </g>
+    </g>
+  </defs>
+
+  <!-- ZONE 1 -->
+  <g transform="translate(80, 0)">
+    <use href="#zone-template" />
+    <text x="83" y="378" font-size="18" fill="#3a4148" text-anchor="middle">Zone 1</text>
+  </g>
+
+  <!-- ZONE 2 -->
+  <g transform="translate(378, 0)">
+    <use href="#zone-template" />
+    <text x="83" y="378" font-size="18" fill="#3a4148" text-anchor="middle">Zone 2</text>
+  </g>
+
+  <!-- ELLIPSIS (...) -->
+  <g fill="#7c8b99">
+    <circle cx="626" cy="250" r="3.8" />
+    <circle cx="640" cy="250" r="3.8" />
+    <circle cx="654" cy="250" r="3.8" />
+  </g>
+
+  <!-- ZONE N (Note: In the mathematical description, N denotes routing duration while z indexes zones; you can change 'Zone N' to 'Zone z' below if you want strict notation alignment) -->
+  <g transform="translate(702, 0)">
+    <use href="#zone-template" />
+    <text x="83" y="378" font-size="18" fill="#3a4148" text-anchor="middle">Zone N</text>
+  </g>
+
+  <!-- RECHARGE LINES -->
+  <g fill="none" stroke="#2b83c6" stroke-width="4" stroke-linecap="round">
+    <!-- Zone 1 to Main Stem -->
+    <path d="M 163 392 L 163 440 Q 163 458, 181 458 L 391 458 Q 409 458, 409 476 L 409 509" marker-end="url(#arrow-blue)" />
+    <!-- Zone 2 to Main Stem -->
+    <path d="M 461 392 L 461 440 Q 461 458, 443 458 L 427 458 Q 409 458, 409 476" />
+    <!-- Zone N to Main Stem -->
+    <path d="M 785 392 L 785 440 Q 785 458, 767 458 L 427 458" />
+  </g>
+
+  <!-- RECHARGE LABELS -->
+  <text x="218" y="438" font-size="16" fill="#2c353d" text-anchor="middle">Recharge</text>
+  <text x="510" y="438" font-size="16" fill="#2c353d" text-anchor="middle">Recharge</text>
+  <text x="728" y="438" font-size="16" fill="#2c353d" text-anchor="middle">Recharge</text>
+
+  <!-- UPPER GW BOX -->
+  <g transform="translate(270, 520)">
+    <rect x="0" y="0" width="276" height="90" rx="8" fill="#e6f3fc" />
+    <g clip-path="url(#gw-clip)">
+      <!-- Light top wave -->
+      <path d="M 0 18 Q 35 8, 70 16 T 140 16 T 210 15 T 276 16 L 276 90 L 0 90 Z" fill="#bce0fa" />
+      <!-- Main water wave -->
+      <path d="M 0 25 Q 35 16, 70 25 T 140 24 T 210 25 T 276 22 L 276 90 L 0 90 Z" fill="url(#ugw-fill)" />
+    </g>
+    <rect x="0" y="0" width="276" height="90" rx="8" fill="none" stroke="#3788c7" stroke-width="2" />
+    <text x="138" y="56" font-size="20" font-weight="600" fill="#222a30" text-anchor="middle">Upper GW</text>
+  </g>
+
+  <!-- PERCOLATION -->
+  <line x1="409" y1="610" x2="409" y2="669" stroke="#2b83c6" stroke-width="4" marker-end="url(#arrow-blue)" />
+  <text x="428" y="644" font-size="16" fill="#2c353d" text-anchor="start">Percolation</text>
+
+  <!-- LOWER GW BOX -->
+  <g transform="translate(270, 680)">
+    <rect x="0" y="0" width="276" height="90" rx="8" fill="#cae4f9" />
+    <g clip-path="url(#gw-clip)">
+      <!-- Light top wave -->
+      <path d="M 0 16 Q 35 8, 70 16 T 140 15 T 210 16 T 276 14 L 276 90 L 0 90 Z" fill="#8ec6f0" />
+      <!-- Main water wave -->
+      <path d="M 0 24 Q 35 16, 70 24 T 140 23 T 210 24 T 276 20 L 276 90 L 0 90 Z" fill="url(#lgw-fill)" />
+    </g>
+    <rect x="0" y="0" width="276" height="90" rx="8" fill="none" stroke="#2473b0" stroke-width="2" />
+    <text x="138" y="58" font-size="20" font-weight="600" fill="#222a30" text-anchor="middle">Lower GW</text>
+  </g>
+
+  <!-- OUTFLOW ARROWS (q1, q2) -->
+  <g fill="none" stroke="#2b83c6" stroke-width="4">
+    <!-- q1 -->
+    <path d="M 546 565 L 664 565 Q 692 565, 692 593 L 692 612 Q 692 630, 710 630 L 736 630" />
+    <!-- q2 -->
+    <path d="M 546 725 L 664 725 Q 692 725, 692 697 L 692 648 Q 692 630, 710 630" />
+    <!-- Combined arrow tip into Routing -->
+    <line x1="705" y1="630" x2="736" y2="630" marker-end="url(#arrow-blue)" />
+  </g>
+
+  <!-- OUTFLOW LABELS -->
+  <text x="622" y="553" font-size="19" font-style="italic" font-family="Georgia, serif" fill="#2c353d" text-anchor="middle">q<tspan dy="5" font-size="13" font-style="normal" font-family="sans-serif">1</tspan></text>
+  <text x="622" y="713" font-size="19" font-style="italic" font-family="Georgia, serif" fill="#2c353d" text-anchor="middle">q<tspan dy="5" font-size="13" font-style="normal" font-family="sans-serif">2</tspan></text>
+
+  <!-- ROUTING BOX -->
+  <g transform="translate(746, 582)">
+    <rect x="0" y="0" width="134" height="96" rx="8" fill="#f1f4f7" stroke="#adb5bd" stroke-width="2" />
+    <text x="67" y="30" font-size="18" font-weight="600" fill="#2c353d" text-anchor="middle">Routing</text>
+    <!-- Triangular hydrograph inside Routing -->
+    <path d="M 16 83 L 52 44 L 112 81 L 120 83 Z" fill="url(#routing-tri)" />
+    <path d="M 16 83 L 52 44 L 112 81" fill="none" stroke="#3977af" stroke-width="2" stroke-linejoin="round" />
+    <line x1="14" y1="83" x2="122" y2="83" stroke="#7d95ad" stroke-width="1.5" />
+  </g>
+
+  <!-- ROUTING TO Q ARROW -->
+  <line x1="880" y1="630" x2="940" y2="630" stroke="#2b83c6" stroke-width="4" marker-end="url(#arrow-blue)" />
+
+  <!-- OUTPUT HYDROGRAPH & Q -->
+  <g transform="translate(950, 575)">
+    <!-- Smooth bell-like hydrograph -->
+    <path d="M 5 76 C 18 76, 22 14, 38 14 C 54 14, 62 74, 92 76 Z" fill="url(#q-curve)" />
+    <path d="M 5 76 C 18 76, 22 14, 38 14 C 54 14, 62 74, 92 76" fill="none" stroke="#2b72ad" stroke-width="2.2" />
+    <line x1="0" y1="76" x2="96" y2="76" stroke="#4578a6" stroke-width="1.8" />
+    <text x="110" y="55" font-size="24" font-weight="700" fill="#2c353d" text-anchor="middle">Q</text>
+  </g>
+</svg>
