@@ -848,6 +848,10 @@ cluster = [
     { name = "seaborn" },
     { name = "tslearn" },
 ]
+flow = [
+    { name = "torch" },
+    { name = "zuko" },
+]
 hybrid = [
     { name = "torch" },
 ]
@@ -890,10 +894,12 @@ requires-dist = [
     { name = "scikit-learn", marker = "extra == 'cluster'", specifier = ">=1.9.1" },
     { name = "scipy", specifier = ">=1.18.1" },
     { name = "seaborn", marker = "extra == 'cluster'", specifier = ">=0.13.2" },
+    { name = "torch", marker = "extra == 'flow'", specifier = ">=2.9" },
     { name = "torch", marker = "extra == 'hybrid'", specifier = ">=2.9" },
     { name = "tslearn", marker = "extra == 'cluster'", git = "https://github.com/CooperBigFoot/tslearn.git?rev=2042188a3e39b728affd3da688e212e59bfb1c06" },
+    { name = "zuko", marker = "extra == 'flow'", specifier = ">=1.5" },
 ]
-provides-extras = ["hybrid", "cluster"]
+provides-extras = ["hybrid", "cluster", "flow"]
 
 [package.metadata.requires-dev]
 acquisition = [
@@ -2989,4 +2995,17 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/de/cc/6667f7b90476aea8ee201f4f2f3bfec7d0032389b77afe02f0ed3d2e3d33/zarr-3.4.2.tar.gz", hash = "sha256:645d64f292f457120fc0ca18dbe38f665b4c21aaea38a2a88b5eead8f06f3d28", size = 943610, upload-time = "2026-10-27T15:31:09.825Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8b/19/56f6907c420c54c7c81a648a266bd047882515fd5182ad432d5e6ca2d545/zarr-3.4.2-py3-none-any.whl", hash = "sha256:a21530a931ac3123b4a4aa17146d11eb9ace227733650d5efbebbbfe38053428", size = 410801, upload-time = "2026-10-27T15:31:08.148Z" },
+]
+
+[[package]]
+name = "zuko"
+version = "1.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8c/41/ddbe72cb64996d7826ba427c675252be0c38fbd9fbf8920d0fcdaf5d8e38/zuko-1.6.0.tar.gz", hash = "sha256:edc516e51bbbf9d64e7663b617cf9293c6e1e6bbfcb39559bc383383e6663b04", size = 45245, upload-time = "2026-03-10T08:38:19.646Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/95/10/ff159867f522cd98e039e748c5e9777446e8b797a79be691c6b730676094/zuko-1.6.0-py3-none-any.whl", hash = "sha256:5c073b613a84a7cd65470ddb94855169020ac49432f73b85f25207e377248a4a", size = 48033, upload-time = "2026-03-10T08:38:21.039Z" },
 ]
