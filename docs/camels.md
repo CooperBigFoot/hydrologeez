@@ -181,3 +181,111 @@ Run `uv run --all-groups pytest`, `uv run ruff check .`,
 
 Implements the [CAMELS input vision](../planning/visions/2026-11-04-camels-hbv-input-preparation-and-readers.md).
 Discussion #90 stays open; output storage and later grid-to-basin inputs are separate.
+
+
+## Hybrid meteorology
+
+Prepare the seven source fields and baseline mean temperature/Oudin PET for
+Daymet, Maurer and NLDAS independently of the existing daily and attribute stores:
+
+```sh
+uv run python -m scripts.camels_meteorology --raw data/camels-us/raw \
+  --output data/camels-us/meteorology
+```
+
+The output must be new. `meteorology.json` is the completion marker. No download,
+normalization, imputation or feature-set selection occurs. Existing traditional
+`Camels` readers are unchanged; observation arrays and static tables are reused,
+not copied into a second source archive.
+
+Fields are `dayl`, `prcp`, `srad`, `swe`, `tmax`, `tmin`, `vp`, `tmean`, `pet`,
+qualified by product, for example `maurer.prcp`. Metadata retains units, source
+member, exact header, source hours, date bounds and derivations. Source values
+are float32 (normal rounding from source decimals). The raw archive remains the
+exact source. Preparation verifies zero SWE and identical temperatures per basin:
+zero SWE is a metadata constant, identical Tmin aliases Tmax, and identical
+mean temperature aliases Tmax too. These have no duplicate array payloads;
+all original names remain selectable. Other values are retained, including
+sentinels. Each selection has separate `valid` and source-row `present` masks.
+
+The local archive's 671 attribute basins have Daymet/NLDAS dates 1980–2014,
+but **Maurer ends in 2008**. A combined selection preserves its requested dates;
+unavailable product rows are missing, not truncated or filled. A window outside
+the combined selected-product coverage is rejected. Physical forcing must be
+valid throughout the loaded pool; select an appropriate window/product rather
+than silently repairing it.
+
+The [source audit](camels-evidence/hybrid-source-audit.json) found no gaps or
+sentinels within these records. All three SWE columns are zero. Maurer and NLDAS
+Tmin equal Tmax on every row: matching field names do not establish independent
+minimum/maximum measurements. The baseline mean is still `(tmin+tmax)/2`, not a
+new scientific interpretation. All source Hr values are 12 despite the readme's
+claim of zero; daily dates are preserved without inferring a timezone. Four
+Maurer files omit date names from their header but contain the same 11 data
+columns. No separate thermal/longwave radiation field is available.
+
+### Select once, reuse resident batches
+
+```python
+from pathlib import Path
+import torch
+from hydrologeez.camels import Camels, read_attributes
+from hydrologeez.camels_meteorology import CamelsMeteorology
+from hydrologeez.hybrid.camels import load_inputs
+from hydrologeez.hybrid.data import Normalization
+from hydrologeez.hybrid.model import ModelConfig
+
+features = ("daymet.prcp", "maurer.prcp", "nldas.prcp")
+config = ModelConfig(features=features, attributes=("gauge_lat",))
+inputs = load_inputs(
+    CamelsMeteorology(Path("data/camels-us/meteorology")),
+    ["01013500", "01022500"],
+    "1990-01-01",
+    "2000-01-01",
+    features=features,
+    physical=("daymet.prcp", "daymet.tmean", "daymet.pet"),
+    attributes=read_attributes(Path("data/camels-us/attributes")),
+    attribute_names=config.attributes,
+    observations=Camels(Path("data/camels-us/prepared")),
+)
+batch = inputs.batch(config, context=slice(0, 365), simulation=slice(0, 365))
+# Only fit on a deliberately authorized training/preprocessing pool:
+normalization = Normalization.fit(batch.meteorology, batch.padding, features)
+# Exclude warm-up or evaluation dates explicitly, without restoring missing targets:
+valid = torch.ones((365, 2), dtype=torch.bool)
+valid[:30] = False
+batch = inputs.batch(config, context=slice(0, 365), simulation=slice(0, 365), evaluation_mask=valid)
+```
+
+The example's latitude is an unscaled engineering input, not a recommended
+scientific attribute set. Select and scale attributes explicitly; numeric finite
+columns are accepted, categorical encodings and missing-attribute policies are
+caller-owned. All source static attributes remain accessible through
+`read_attributes`. Discharge-derived attributes must not enter a supposedly
+unlabeled pool accidentally.
+
+Omit `observations` for pretraining/inference pools that must not read discharge.
+Meteorology-only `CamelsMeteorology.select` needs neither a physical product nor
+PyTorch; it can supply authorized preprocessing or pretraining pools even where
+no complete physical forcing is available. The hybrid convenience adapter
+requires valid physical forcing for its reusable runtime batch. It never fits
+normalization. Genuine missing neural values become NaN; raw values and source
+masks remain in `inputs.source`. Synthetic hiding is supplied separately to the
+runtime, and these dense windows have no padding. Observations retain original
+cfs, QC, source presence and Daymet-header-area mm/day conversion; no QC filtering
+is imposed. Target validity excludes nonfinite/missing observations and can only
+be narrowed by `evaluation_mask`. Initial memory can be supplied with
+`dataclasses.replace(batch, initial=memory)`.
+
+`batch` verifies ordered feature/attribute names against `ModelConfig`. Context
+and simulation slices may differ. Slice batches share resident CPU storage;
+list basin indexing and device transfers copy the selected batch. Do not mutate
+shared tensors. Load a selected basin/date pool once, then reuse it rather than
+opening files for each training step. Three precipitation estimates are never
+automatically averaged. Physical P/T/PET remain separate, unnormalized values.
+The same batches support direct discharge, masked pretraining, frozen-encoder
+training and inference described in [hybrid HBV](hybrid-hbv.md).
+
+See the [layout decision and measurements](../planning/experimentation/2026-11-10-camels-inputs-for-efficient-hybrid-hbv-training.md)
+for loading, copies, memory, conversion and bounded real-data runtime evidence.
+No remote VM performance or accuracy improvement is claimed.

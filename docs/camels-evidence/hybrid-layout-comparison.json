@@ -1,0 +1,74 @@
+{
+  "layout_isolated_combined_3652": {
+    "layout": "combined",
+    "days": 3652,
+    "selected_bytes": 11218944,
+    "load_seconds": [
+      0.009354750160127878,
+      0.0039449590258300304,
+      0.003404707880690694,
+      0.003149291966110468,
+      0.0030074999667704105
+    ],
+    "500_resident_batches_seconds": 0.0034007090143859386,
+    "batch_bytes": 280320,
+    "maxrss_bytes": 143982592,
+    "numpy": "2.5.4",
+    "platform": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
+    "checksum": 21267170.185546875
+  },
+  "layout_isolated_per-basin_3652": {
+    "layout": "per-basin",
+    "days": 3652,
+    "selected_bytes": 11218944,
+    "load_seconds": [
+      0.028021665988489985,
+      0.01162708317860961,
+      0.057988750049844384,
+      0.02376258303411305,
+      0.011157500091940165
+    ],
+    "500_resident_batches_seconds": 0.0034420830197632313,
+    "batch_bytes": 280320,
+    "maxrss_bytes": 130220032,
+    "numpy": "2.5.4",
+    "platform": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
+    "checksum": 21267170.185546875
+  },
+  "layout_isolated_combined_12784": {
+    "layout": "combined",
+    "days": 12784,
+    "selected_bytes": 39272448,
+    "load_seconds": [
+      0.018397290958091617,
+      0.013275375124067068,
+      0.011728292098268867,
+      0.01572074997238815,
+      0.010829791193827987
+    ],
+    "500_resident_batches_seconds": 0.0034391251392662525,
+    "batch_bytes": 280320,
+    "maxrss_bytes": 241336320,
+    "numpy": "2.5.4",
+    "platform": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
+    "checksum": 21267170.185546875
+  },
+  "layout_isolated_per-basin_12784": {
+    "layout": "per-basin",
+    "days": 12784,
+    "selected_bytes": 39272448,
+    "load_seconds": [
+      0.10275920783169568,
+      0.04343524994328618,
+      0.02821462508291006,
+      0.05813091597519815,
+      0.018795792013406754
+    ],
+    "500_resident_batches_seconds": 0.003463875036686659,
+    "batch_bytes": 280320,
+    "maxrss_bytes": 188776448,
+    "numpy": "2.5.4",
+    "platform": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
+    "checksum": 21267170.185546875
+  }
+}
