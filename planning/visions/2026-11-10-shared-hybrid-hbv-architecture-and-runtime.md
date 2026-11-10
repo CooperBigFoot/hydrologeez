@@ -46,9 +46,11 @@ For later regional evaluation, inherit #170's information boundary: unlabeled me
 
 ## Hardware and evidence of success
 
-The eventual training device is a university NVIDIA L4, currently inaccessible. The user has confirmed they can provide an NVIDIA GPU when needed, including an RTX 4090 through Runpod with SSH access for development validation. Ask for access when CUDA validation is ready; do not assume credentials exist or provision/rent resources without authorization. The local machine is an M4 Mac with an Apple integrated GPU; ordinary PyTorch CPU/MPS work may be useful, but FLA's optimized KDA support there is unverified and not a delivery requirement.
+Prefer development and validation on the user's M4 Mac, using PyTorch CPU and MPS where supported. Avoid requiring an NVIDIA GPU to deliver this foundation. FLA's optimized KDA support on the Mac is unverified: investigate it, but a small plain-PyTorch KDA implementation adapted from the licensed reference is acceptable if it avoids an accelerator-specific dependency. Preserve KDA rather than substituting a different encoder, and do not build multiple execution backends without a demonstrated need.
 
-Use local checks where practical and validate the optimized KDA forward/backward training path on an available CUDA GPU. Record device, package versions, model/input sizes, numerical results, and memory/performance observations without claiming 4090 measurements describe L4 performance. If GPU access blocks this validation, report that gap rather than claiming it passed.
+The university NVIDIA L4 is currently inaccessible. The user can provide an NVIDIA GPU, including an RTX 4090 through Runpod with SSH access, if a concrete development limitation warrants it. This is a fallback, not required validation or authorization to rent resources. Explain the limitation and ask before requesting provisioning. Optimized CUDA kernels and CUDA benchmarking are optional; absence of CUDA testing alone does not block completion.
+
+Validate the selected KDA path's forward and backward behavior locally where feasible. Record device, package versions, model/input sizes, numerical results, and relevant memory/performance limits. Distinguish small local correctness checks from demonstrated large-scale training performance; do not claim support for untested devices.
 
 Observable success includes:
 
@@ -56,7 +58,7 @@ Observable success includes:
 - Reconstruction training scores only the intended targets and updates encoder/reconstruction weights. Its saved encoder can enter αHBV discharge training without changing frozen encoder behavior, while the parameter head learns through HBV.
 - Differentiable HBV matches the established simulator on representative forward cases, retains mass-balance/state behavior, and has checked gradients away from nondifferentiable boundaries. Existing HBV functionality remains intact.
 - Saved model and preprocessing state can reproduce inference with the correct encoder, feature order, parameter mapping, and physical inputs. Examples make stage transitions and state handling understandable without a CAMELS dependency.
-- CUDA KDA validation and remaining scientific or performance limits are reported. Neither improved regional accuracy nor a particular speedup is required to complete this reusable foundation.
+- KDA forward/backward validation on the selected backend and remaining scientific or performance limits are reported. Neither NVIDIA access, improved regional accuracy, nor a particular speedup is required to complete this reusable foundation.
 
 Use project-native `uv`, strongly typed Python, Ruff, ty, and focused test-first development. Leave reversible engineering details to the implementing agent; explain consequential departures from the selected baseline.
 
