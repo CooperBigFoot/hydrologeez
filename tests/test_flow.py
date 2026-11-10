@@ -135,3 +135,35 @@ def test_density_near_upper_bound() -> None:
     model = ConditionalFlow(ModelConfig(("a",), ("mm",), ("c",), (-10.0,), (1.0,), hidden=(8,)))
     theta = torch.nextafter(torch.tensor([[1.0]]), torch.tensor([[0.0]]))
     assert torch.isfinite(model.log_prob(theta, torch.zeros(1, 1))).all()
+
+
+def test_float64_decimal_bounds_and_checkpoint(tmp_path: Path) -> None:
+    from hydrologeez.flow.model import ConditionalFlow, ModelConfig
+    from hydrologeez.flow.runtime import Batch, Training
+
+    config = ModelConfig(("a",), ("mm",), ("c",), (0.1,), (0.3,), hidden=(8,))
+    model = ConditionalFlow(config, dtype=torch.float64)
+    batch = Batch(torch.tensor([[0.1000000001]], dtype=torch.float64), torch.zeros(1, 1, dtype=torch.float64))
+    assert torch.isfinite(model.log_prob(batch.parameters, batch.attributes)).all()
+    for value in (0.1, 0.3, 0.300000001):
+        with pytest.raises(ValueError, match="strictly inside"):
+            model.log_prob(torch.tensor([[value]], dtype=torch.float64), batch.attributes)
+    assert_close(model.lower, torch.tensor([0.1], dtype=torch.float64), rtol=0, atol=0)
+    assert_close(model.upper, torch.tensor([0.3], dtype=torch.float64), rtol=0, atol=0)
+    training = Training(model)
+    training.train_step(batch)
+    path = tmp_path / "decimal-bounds.pt"
+    training.save(path)
+    restored = Training.load(path)
+    assert restored.model.config == config
+    assert restored.evaluate(batch) == training.evaluate(batch)
+    assert_close(restored.model.lower, model.lower, rtol=0, atol=0)
+    assert_close(restored.model.upper, model.upper, rtol=0, atol=0)
+    samples = restored.model.sample(batch.attributes, 20)
+    assert samples.dtype == torch.float64
+    assert torch.isfinite(samples).all()
+    assert (samples >= 0.1).all() and (samples <= 0.3).all()
+    training.train_step(batch)
+    restored.train_step(batch)
+    for actual, expected in zip(restored.model.parameters(), model.parameters(), strict=True):
+        assert_close(actual, expected, rtol=0, atol=0)

@@ -66,7 +66,7 @@ class Training:
         saved = torch.load(path, map_location=device, weights_only=True)
         if saved["version"] != 1:
             raise ValueError("Unsupported checkpoint version")
-        model = ConditionalFlow(ModelConfig(**saved["config"])).to(device=device, dtype=saved["model"]["lower"].dtype)
+        model = ConditionalFlow(ModelConfig(**saved["config"]), dtype=saved["model"]["lower"].dtype).to(device=device)
         model.load_state_dict(saved["model"])
         training = cls(model, learning_rate=saved["learning_rate"])
         training.optimizer.load_state_dict(saved["optimizer"])

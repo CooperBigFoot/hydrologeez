@@ -41,9 +41,13 @@ copy the requested batch. Only the batch moves to the requested device.
 
 Callers choose disjoint catchment pools, row-level splits, epochs, and shuffle
 order. Attributes follow the supplied catchment order; examples follow archive
-order. Keep model and batch dtype/device consistent (`.double()` for float64
-archives). Direct tensor calls must follow configured field order; resident
-`batch` checks names and units against the model configuration.
+order. Keep model and batch dtype/device consistent. Construct float64 models with
+`ConditionalFlow(config, dtype=torch.float64)` so bounds retain their precision;
+calling `.double()` on a float32 model cannot recover rounded bounds. Without
+`dtype`, construction uses PyTorch's default dtype. Bounds are represented at the
+chosen precision, which also defines endpoint checks. Direct tensor calls must
+follow configured field order; resident `batch` checks names and units against
+the model configuration.
 
 ## Example
 
@@ -69,7 +73,7 @@ config = ModelConfig(
     inputs.parameter_names, inputs.units, inputs.attribute_names,
     lower=(0.0, 0.0), upper=(1000.0, 1.0), hidden=(64, 64), transforms=3,
 )
-training = Training(ConditionalFlow(config))
+training = Training(ConditionalFlow(config, dtype=inputs.parameters.dtype))
 batch = inputs.batch(config, examples=[0, 1])
 training.train_step(batch)
 loss = training.evaluate(batch)  # use your held-out pool for validation

@@ -23,12 +23,13 @@ class ConditionalFlow(nn.Module):
 
     Densities require strictly interior physical values. Samples use the inverse
     mapping, not clipping; floating-point rounding can reach an endpoint.
+    Construct with the input dtype to avoid rounding bounds before conversion.
     """
 
     lower: Tensor
     upper: Tensor
 
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(self, config: ModelConfig, *, dtype: torch.dtype | None = None) -> None:
         super().__init__()
         n = len(config.parameters)
         if (
@@ -43,13 +44,15 @@ class ConditionalFlow(nn.Module):
         if not config.hidden or min(config.hidden) < 1 or config.transforms < 1:
             raise ValueError("Hidden widths and transforms must be positive")
         self.config = config
-        self.register_buffer("lower", torch.tensor(config.lower))
-        self.register_buffer("upper", torch.tensor(config.upper))
+        self.register_buffer("lower", torch.tensor(config.lower, dtype=dtype))
+        self.register_buffer("upper", torch.tensor(config.upper, dtype=dtype))
         if not bool(
             torch.isfinite(self.lower).all() & torch.isfinite(self.upper).all() & (self.upper > self.lower).all()
         ):
             raise ValueError("Bounds must be finite and strictly increasing")
-        self.flow = MAF(n, len(config.attributes), transforms=config.transforms, hidden_features=config.hidden)
+        self.flow = MAF(n, len(config.attributes), transforms=config.transforms, hidden_features=config.hidden).to(
+            dtype=self.lower.dtype
+        )
 
     def _check_attributes(self, attributes: Tensor) -> None:
         if (
