@@ -22,6 +22,10 @@ cluster = [
     "seaborn>=0.13.2",
     "tslearn @ git+https://github.com/CooperBigFoot/tslearn.git@2042188a3e39b728affd3da688e212e59bfb1c06",
 ]
+flow = [
+    "torch>=2.9",
+    "zuko>=1.5",
+]
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13"]
