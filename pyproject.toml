@@ -13,6 +13,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+hybrid = ["torch>=2.9"]
 cluster = [
     "kneed>=0.8.5",
     "cartopy>=0.26.0",
