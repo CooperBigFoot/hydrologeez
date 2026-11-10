@@ -1,0 +1,69 @@
+{
+  "platform": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
+  "numpy": "2.5.4",
+  "torch": "2.15.0",
+  "cache": "warm filesystem cache; not a cold-read or target VM claim",
+  "torch_threads": 1,
+  "selection": {
+    "basins": 128,
+    "start": "1990-01-01",
+    "stop": "2000-01-01",
+    "features": [
+      "daymet.prcp",
+      "maurer.prcp",
+      "nldas.prcp",
+      "daymet.srad",
+      "daymet.vp",
+      "daymet.tmean"
+    ],
+    "shape": [
+      128,
+      3652,
+      6
+    ],
+    "dtype": "float32",
+    "value_bytes": 11218944,
+    "mask_bytes": 5609472
+  },
+  "stored_file_bytes": 677117109,
+  "npy_payload_bytes": 675225287,
+  "load_seconds": 0.45937225013040006,
+  "zero_copy_tensor_conversion_seconds": 8.220807649195194e-05,
+  "500_slice_batches_seconds": 0.000604500062763691,
+  "500_indexed_copy_batches_seconds": 0.009188333991914988,
+  "batch_shape": [
+    32,
+    365,
+    6
+  ],
+  "device": "mps",
+  "one_batch_transfer_seconds": 0.019128042040392756,
+  "adapter_load_seconds": 0.9515566250775009,
+  "adapter_resident_bytes": 52355072,
+  "peak_process_rss_native_units": 494043136,
+  "rss_note": "macOS bytes, Linux KiB; includes all selections, interpreter, torch, runtime and mapped pages",
+  "bounded_runtime": {
+    "lstm.direct": {
+      "first_loss": 2.7725727558135986,
+      "seconds": 0.014446916058659554,
+      "finite_predictions": 1.0
+    },
+    "lstm.pretrain": {
+      "first_loss": 0.811480700969696,
+      "frozen_loss": 2.7725796699523926,
+      "seconds": 0.013931582914665341,
+      "finite_predictions": 1.0
+    },
+    "kda.direct": {
+      "first_loss": 2.775686025619507,
+      "seconds": 0.013927582884207368,
+      "finite_predictions": 1.0
+    },
+    "kda.pretrain": {
+      "first_loss": 0.8733302354812622,
+      "frozen_loss": 2.775608539581299,
+      "seconds": 0.014310667058452964,
+      "finite_predictions": 1.0
+    }
+  }
+}
