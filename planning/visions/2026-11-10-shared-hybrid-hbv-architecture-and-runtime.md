@@ -48,7 +48,7 @@ For later regional evaluation, inherit #170's information boundary: unlabeled me
 
 Prefer development and validation on the user's M4 Mac, using PyTorch CPU and MPS where supported. Avoid requiring an NVIDIA GPU to deliver this foundation. FLA's optimized KDA support on the Mac is unverified: investigate it, but a small plain-PyTorch KDA implementation adapted from the licensed reference is acceptable if it avoids an accelerator-specific dependency. Preserve KDA rather than substituting a different encoder, and do not build multiple execution backends without a demonstrated need.
 
-The university NVIDIA L4 is currently inaccessible. The user can provide an NVIDIA GPU, including an RTX 4090 through Runpod with SSH access, if a concrete development limitation warrants it. This is a fallback, not required validation or authorization to rent resources. Explain the limitation and ask before requesting provisioning. Optimized CUDA kernels and CUDA benchmarking are optional; absence of CUDA testing alone does not block completion.
+NVIDIA GPU testing is not required by default. If the implementing agent identifies a concrete need, it must explain why and obtain the user’s approval before proceeding.
 
 Validate the selected KDA path's forward and backward behavior locally where feasible. Record device, package versions, model/input sizes, numerical results, and relevant memory/performance limits. Distinguish small local correctness checks from demonstrated large-scale training performance; do not claim support for untested devices.
 
