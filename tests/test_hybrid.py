@@ -128,8 +128,11 @@ def test_kda_coordinate_decay_and_gradcheck() -> None:
     assert torch.autograd.gradcheck(kda_recurrence, args)
 
 
+@pytest.mark.parametrize("loss_name", ["mse", "soft_npe"])
 @pytest.mark.parametrize("encoder", ["lstm", "kda"])
-def test_training_stages_checkpoint_and_freeze(encoder: Literal["lstm", "kda"], tmp_path: Path) -> None:
+def test_training_stages_checkpoint_and_freeze(
+    encoder: Literal["lstm", "kda"], loss_name: Literal["mse", "soft_npe"], tmp_path: Path
+) -> None:
     from hydrologeez.hybrid.data import Normalization
     from hydrologeez.hybrid.model import HybridHBV, ModelConfig
     from hydrologeez.hybrid.runtime import Batch, Training
@@ -146,10 +149,10 @@ def test_training_stages_checkpoint_and_freeze(encoder: Literal["lstm", "kda"], 
         padding,
         values.transpose(0, 1).unsqueeze(2),
         torch.ones(2, 1),
-        discharge=torch.ones(12, 2),
+        discharge=torch.arange(1.0, 13.0)[:, None].expand(-1, 2),
         discharge_valid=~padding.T,
     )
-    training = Training(model, stage="direct", learning_rate=0.01)
+    training = Training(model, stage="direct", learning_rate=0.01, discharge_loss=loss_name, softness=0.3)
     before = {k: v.clone() for k, v in model.state_dict().items()}
     loss = training.train_step(batch)
     assert np.isfinite(loss)
@@ -166,6 +169,8 @@ def test_training_stages_checkpoint_and_freeze(encoder: Literal["lstm", "kda"], 
     training.save(path)
     restored = Training.load(path)
     assert restored.model.config == model.config
+    assert restored.discharge_loss == loss_name
+    assert restored.softness == 0.3
     assert_close(restored.model.normalization.mean, norm.mean)
     assert_close(restored.predict(batch).outlet, training.predict(batch).outlet)
     restored.set_stage("frozen")
@@ -182,6 +187,9 @@ def test_training_stages_checkpoint_and_freeze(encoder: Literal["lstm", "kda"], 
     restored.save(path)
     frozen = Training.load(path)
     assert frozen.stage == "frozen"
+    assert frozen.discharge_loss == loss_name
+    assert frozen.softness == 0.3
+    assert frozen.evaluate(batch) == restored.evaluate(batch)
     assert_close(frozen.predict(batch).outlet, restored.predict(batch).outlet, rtol=0, atol=0)
     assert np.isfinite(frozen.evaluate(batch))
 
@@ -209,3 +217,21 @@ def test_encoder_prefix_causality(encoder: Literal["lstm", "kda"]) -> None:
     model = KDA(5, 8) if encoder == "kda" else LSTM(5, 8)
     x = torch.randn(2, 6, 5)
     assert_close(model(x)[:, :3], model(x[:, :3]))
+
+
+def test_legacy_checkpoint_uses_mse(tmp_path: Path) -> None:
+    from hydrologeez.hybrid.data import Normalization
+    from hydrologeez.hybrid.model import HybridHBV, ModelConfig
+    from hydrologeez.hybrid.runtime import Training
+
+    norm = Normalization(torch.zeros(3), torch.ones(3), ("P", "T", "PET"))
+    training = Training(HybridHBV(ModelConfig(features=norm.features, hidden=8), norm))
+    path = tmp_path / "legacy.pt"
+    training.save(path)
+    saved = torch.load(path, weights_only=True)
+    saved["version"] = 1
+    del saved["discharge_loss"], saved["softness"]
+    torch.save(saved, path)
+    restored = Training.load(path)
+    assert restored.discharge_loss == "mse"
+    assert restored.softness == 0.1
