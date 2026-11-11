@@ -13,7 +13,7 @@ This vision first delivers experiment [#185](https://github.com/CooperBigFoot/hy
 - Use **six workers** for the experiment, with internal threading managed to avoid nested oversubscription.
 - Each setting selects its best candidate across its trials using its own calibration objective. Evaluate those selected candidates with unchanged exact `kge_np`. Each plot box contains one exact-NPE score per basin, not ten seed scores treated as independent basins. Preserve per-trial results as well.
 
-This is 10.5 million candidate-basin evaluations across six settings. Equal candidate budgets isolate the objective comparison, not equal compute costs. Record elapsed runtime and failures. Any improvement demonstrates better finite-budget search results, not an increase in the theoretical maximum of exact NPE.
+This is 10.5 million candidate-basin evaluations across six settings. Equal candidate budgets isolate the objective comparison, not equal compute costs. Record elapsed runtime and failures, including attempted and successful trials per basin and setting. Partial trials do not count as a completed equal-budget comparison; report them explicitly before drawing conclusions. Any improvement demonstrates better finite-budget search results, not an increase in the theoretical maximum of exact NPE.
 
 ## Existing evidence and implementation scope
 
@@ -34,7 +34,7 @@ Save the experiment's scripts/configuration, basin selection, per-trial and sele
 The approved visual reference is `/Users/nicolaslazaro/Desktop/npe-calibration-mock.png`, which uses synthetic data only. The real figure must have:
 
 - Six boxplots in order: Exact NPE, then Soft NPE 0.01, 0.03, 0.1, 0.3, 1.0. Put softness on a second tick-label line if useful.
-- Exact NPE on the y-axis, labelled `NPE`. Every box shows the same 50 basins' exact-NPE scores.
+- Exact NPE on the y-axis, labelled `NPE`. The completed comparison requires the same 50 basins' valid exact-NPE scores in every box. If failures prevent that, preserve the partial results and report the blocker rather than fabricate values, replace basins, or present a smaller sample as the completed experiment.
 - A grey baseline and a different colour for each soft variant.
 - No title, legend, x-axis label, or other text beyond axis labels/tick annotations. Use `sns.despine()`.
 - Axis limits that show all actual results; do not blindly copy the mock's limits. Save a high-resolution PNG and reproducible plotting code.
