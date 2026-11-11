@@ -235,3 +235,69 @@ def test_legacy_checkpoint_uses_mse(tmp_path: Path) -> None:
     restored = Training.load(path)
     assert restored.discharge_loss == "mse"
     assert restored.softness == 0.1
+
+
+def test_explicit_calibration_bounds_preserve_defaults_and_checkpoints(tmp_path: Path) -> None:
+    from hydrologeez.calibration import SEARCH_BOUNDS
+    from hydrologeez.hybrid.data import Normalization
+    from hydrologeez.hybrid.model import LOWER, UPPER, HybridHBV, ModelConfig
+    from hydrologeez.hybrid.runtime import Batch, Training
+
+    norm = Normalization(torch.zeros(3), torch.ones(3), ("P", "T", "PET"))
+    default_model = HybridHBV(ModelConfig(features=norm.features, hidden=8), norm)
+    assert_close(default_model.parameter_lower, torch.tensor(LOWER))
+    assert_close(default_model.parameter_upper, torch.tensor(UPPER))
+
+    ga_lower = tuple(float(x) for x in SEARCH_BOUNDS[:, 0])
+    ga_upper = tuple(float(x) for x in SEARCH_BOUNDS[:, 1])
+    config = ModelConfig(
+        features=norm.features,
+        hidden=8,
+        routing_support=5,
+        parameter_lower=ga_lower,
+        parameter_upper=ga_upper,
+    )
+    model = HybridHBV(config, norm)
+    assert_close(model.parameter_lower, torch.tensor(ga_lower))
+    assert_close(model.parameter_upper, torch.tensor(ga_upper))
+    values = torch.ones(2, 6, 3)
+    padding = torch.zeros(2, 6, dtype=torch.bool)
+    params = model.physical_parameters(model.represent(values, torch.empty(2, 0), padding), padding)
+    assert (params >= model.parameter_lower).all() and (params <= model.parameter_upper).all()
+
+    batch = Batch(
+        values,
+        torch.empty(2, 0),
+        padding,
+        values.transpose(0, 1).unsqueeze(2),
+        torch.ones(2, 1),
+        discharge=torch.ones(6, 2),
+        discharge_valid=torch.ones(6, 2, dtype=torch.bool),
+    )
+    training = Training(model)
+    assert np.isfinite(training.train_step(batch))
+    path = tmp_path / "ga-bounds.pt"
+    training.save(path)
+    restored = Training.load(path)
+    assert restored.model.config == config
+    assert_close(restored.model.parameter_lower, torch.tensor(ga_lower), rtol=0, atol=0)
+    assert_close(restored.model.parameter_upper, torch.tensor(ga_upper), rtol=0, atol=0)
+    assert_close(restored.predict(batch).outlet, training.predict(batch).outlet, rtol=0, atol=0)
+
+    # Out-of-domain bounds (e.g. MAXBAS upper > routing_support or FC <= 0) are rejected.
+    with pytest.raises(ValueError, match="routing support"):
+        HybridHBV(
+            ModelConfig(
+                features=norm.features,
+                routing_support=4,
+                parameter_lower=ga_lower,
+                parameter_upper=ga_upper,
+            ),
+            norm,
+        )
+    bad_lower = (*ga_lower[:5], 0.0, *ga_lower[6:])
+    with pytest.raises(ValueError, match="physical"):
+        HybridHBV(
+            ModelConfig(features=norm.features, parameter_lower=bad_lower, parameter_upper=ga_upper),
+            norm,
+        )

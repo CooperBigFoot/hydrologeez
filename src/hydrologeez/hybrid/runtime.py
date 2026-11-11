@@ -135,7 +135,13 @@ class Training:
         saved = torch.load(path, map_location=device, weights_only=True)
         if saved["version"] not in (1, 2):
             raise ValueError("unsupported checkpoint version")
-        config = ModelConfig(**saved["config"])
+        raw_config = dict(saved["config"])
+        for key in ("features", "attributes"):
+            raw_config[key] = tuple(raw_config[key])
+        for key in ("parameter_lower", "parameter_upper"):
+            if raw_config.get(key) is not None:
+                raw_config[key] = tuple(raw_config[key])
+        config = ModelConfig(**raw_config)
         state = saved["model"]
         normalization = Normalization(state["mean"], state["scale"], config.features)
         model = HybridHBV(config, normalization).to(device=device, dtype=state["mean"].dtype)
