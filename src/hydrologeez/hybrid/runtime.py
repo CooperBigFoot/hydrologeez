@@ -1,5 +1,6 @@
 """Reusable training stages, validation, inference and checkpoint persistence."""
 
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
@@ -7,7 +8,9 @@ from typing import Literal
 import torch
 from torch import Tensor
 
-from .data import Normalization, masked_mse, prepare
+from hydrologeez.losses import masked_mse, soft_npe_loss
+
+from .data import Normalization, prepare
 from .hbv import Memory, Result
 from .model import HybridHBV, ModelConfig
 
@@ -34,7 +37,21 @@ class Training:
     the current stage's optimizer. Caller owns batching and epoch selection.
     """
 
-    def __init__(self, model: HybridHBV, *, stage: Stage = "direct", learning_rate: float = 0.001) -> None:
+    def __init__(
+        self,
+        model: HybridHBV,
+        *,
+        stage: Stage = "direct",
+        learning_rate: float = 0.001,
+        discharge_loss: Literal["mse", "soft_npe"] = "mse",
+        softness: float = 0.1,
+    ) -> None:
+        if discharge_loss not in ("mse", "soft_npe"):
+            raise ValueError("unknown discharge loss")
+        if not math.isfinite(softness) or softness <= 0:
+            raise ValueError("softness must be finite and positive")
+        self.discharge_loss = discharge_loss
+        self.softness = softness
         self.model = model
         self.learning_rate = learning_rate
         self.set_stage(stage)
@@ -65,6 +82,8 @@ class Training:
         prediction = self.model(
             batch.meteorology, batch.attributes, batch.padding, batch.forcing, batch.area, batch.initial
         )
+        if self.discharge_loss == "soft_npe":
+            return soft_npe_loss(prediction.outlet, batch.discharge, batch.discharge_valid, softness=self.softness)
         valid = batch.discharge_valid & torch.isfinite(batch.discharge)
         return masked_mse(prediction.outlet, batch.discharge, valid)
 
@@ -99,7 +118,9 @@ class Training:
         """
         torch.save(
             {
-                "version": 1,
+                "version": 2,
+                "discharge_loss": self.discharge_loss,
+                "softness": self.softness,
                 "config": asdict(self.model.config),
                 "model": self.model.state_dict(),
                 "stage": self.stage,
@@ -112,13 +133,19 @@ class Training:
     @classmethod
     def load(cls, path: str | Path, *, device: str = "cpu") -> "Training":
         saved = torch.load(path, map_location=device, weights_only=True)
-        if saved["version"] != 1:
+        if saved["version"] not in (1, 2):
             raise ValueError("unsupported checkpoint version")
         config = ModelConfig(**saved["config"])
         state = saved["model"]
         normalization = Normalization(state["mean"], state["scale"], config.features)
         model = HybridHBV(config, normalization).to(device=device, dtype=state["mean"].dtype)
         model.load_state_dict(state)
-        training = cls(model, stage=saved["stage"], learning_rate=saved["learning_rate"])
+        training = cls(
+            model,
+            stage=saved["stage"],
+            learning_rate=saved["learning_rate"],
+            discharge_loss=saved["discharge_loss"] if saved["version"] == 2 else "mse",
+            softness=saved["softness"] if saved["version"] == 2 else 0.1,
+        )
         training.optimizer.load_state_dict(saved["optimizer"])
         return training

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import torch
 from torch import Tensor
 
+from hydrologeez.losses import masked_mse as masked_mse
+
 
 @dataclass(frozen=True)
 class Normalization:
@@ -60,11 +62,3 @@ def prepare(values: Tensor, padding: Tensor, hidden: Tensor, normalization: Norm
     normalized = torch.where(valid, (values - normalization.mean) / normalization.scale, 0.0)
     inputs = torch.cat((torch.where(visible, normalized, 0.0), visible.to(values.dtype), targets.to(values.dtype)), -1)
     return Prepared(inputs, normalized, targets)
-
-
-def masked_mse(prediction: Tensor, target: Tensor, selected: Tensor) -> Tensor:
-    if prediction.shape != target.shape or selected.shape != target.shape or selected.dtype != torch.bool:
-        raise ValueError("prediction, target and boolean mask must have matching shapes")
-    if not bool(selected.any()):
-        raise ValueError("loss needs selected targets")
-    return (prediction[selected] - target[selected]).square().mean()
