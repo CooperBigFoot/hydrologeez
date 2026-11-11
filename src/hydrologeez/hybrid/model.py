@@ -20,6 +20,7 @@ class ModelConfig:
     routing_support: int = 7
     parameter_lower: tuple[float, ...] | None = None
     parameter_upper: tuple[float, ...] | None = None
+    segment_length: int | None = None
 
 
 # Baseline search ranges, not universal hydrological calibration bounds.
@@ -70,6 +71,13 @@ class HybridHBV(nn.Module):
             raise ValueError("feature/attribute order must be explicit and unique")
         if (config.parameter_lower is None) != (config.parameter_upper is None):
             raise ValueError("supply both parameter_lower and parameter_upper or neither")
+        if config.segment_length is not None and (
+            config.encoder != "kda"
+            or isinstance(config.segment_length, bool)
+            or not isinstance(config.segment_length, int)
+            or config.segment_length < 1
+        ):
+            raise ValueError("segment_length requires the kda encoder and a positive integer")
         self.config = config
         dtype = normalization.mean.dtype
         self.register_buffer("mean", normalization.mean.detach().clone())
@@ -85,7 +93,11 @@ class HybridHBV(nn.Module):
         self.register_buffer("parameter_lower", lower)
         self.register_buffer("parameter_upper", upper)
         inputs = 3 * len(config.features) + len(config.attributes)
-        self.encoder = LSTM(inputs, config.hidden) if config.encoder == "lstm" else KDA(inputs, config.hidden)
+        self.encoder = (
+            LSTM(inputs, config.hidden)
+            if config.encoder == "lstm"
+            else KDA(inputs, config.hidden, segment_length=config.segment_length)
+        )
         self.parameter_head = nn.Sequential(
             nn.Linear(config.hidden, config.hidden), nn.SiLU(), nn.Linear(config.hidden, 13)
         )
