@@ -18,6 +18,8 @@ class ModelConfig:
     attributes: tuple[str, ...] = ()
     hidden: int = 16
     routing_support: int = 7
+    parameter_lower: tuple[float, ...] | None = None
+    parameter_upper: tuple[float, ...] | None = None
 
 
 # Baseline search ranges, not universal hydrological calibration bounds.
@@ -25,6 +27,25 @@ class ModelConfig:
 PARAMETER_NAMES = ("TT", "CFMAX", "CFR", "CWH", "SCF", "FC", "BETA", "LP", "PERC", "Alpha", "K1", "K2", "MAXBAS")
 LOWER = (-2.0, 0.1, 0.01, 0.01, 0.5, 10.0, 0.3, 0.1, 0.01, 0.01, 0.001, 0.001, 1.0)
 UPPER = (2.0, 5.0, 0.2, 0.2, 1.5, 500.0, 3.0, 1.0, 4.0, 0.5, 0.2, 0.1, 7.0)
+
+
+def _check_parameter_bounds(lower: Tensor, upper: Tensor, routing_support: int) -> None:
+    if (
+        lower.shape != (13,)
+        or upper.shape != (13,)
+        or not bool(torch.isfinite(lower).all() & torch.isfinite(upper).all() & (upper > lower).all())
+    ):
+        raise ValueError("parameter bounds must be 13 finite strictly increasing pairs")
+    if bool(lower[12] < 1) or bool(upper[12] > routing_support):
+        raise ValueError("MAXBAS bounds must lie within [1, routing support]")
+    if (
+        bool((lower[1:4] < 0).any())
+        or bool((upper[2:4] > 1).any())
+        or bool((lower[4:8] <= 0).any())
+        or bool(upper[7] > 1)
+        or bool((lower[8:12] < 0).any())
+    ):
+        raise ValueError("parameter bounds violate HBV physical domains")
 
 
 class HybridHBV(nn.Module):
@@ -47,12 +68,21 @@ class HybridHBV(nn.Module):
             raise ValueError("invalid encoder, hidden size or routing support")
         if config.features != normalization.features or len(set(config.attributes)) != len(config.attributes):
             raise ValueError("feature/attribute order must be explicit and unique")
+        if (config.parameter_lower is None) != (config.parameter_upper is None):
+            raise ValueError("supply both parameter_lower and parameter_upper or neither")
         self.config = config
+        dtype = normalization.mean.dtype
         self.register_buffer("mean", normalization.mean.detach().clone())
         self.register_buffer("scale", normalization.scale.detach().clone())
-        self.register_buffer("parameter_lower", torch.tensor(LOWER))
-        upper = torch.tensor(UPPER)
-        upper[-1] = config.routing_support
+        if config.parameter_lower is None or config.parameter_upper is None:
+            lower = torch.tensor(LOWER, dtype=dtype)
+            upper = torch.tensor(UPPER, dtype=dtype)
+            upper[-1] = config.routing_support
+        else:
+            lower = torch.tensor(config.parameter_lower, dtype=dtype)
+            upper = torch.tensor(config.parameter_upper, dtype=dtype)
+        _check_parameter_bounds(lower, upper, config.routing_support)
+        self.register_buffer("parameter_lower", lower)
         self.register_buffer("parameter_upper", upper)
         inputs = 3 * len(config.features) + len(config.attributes)
         self.encoder = LSTM(inputs, config.hidden) if config.encoder == "lstm" else KDA(inputs, config.hidden)
