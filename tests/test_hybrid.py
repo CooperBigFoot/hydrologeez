@@ -301,3 +301,158 @@ def test_explicit_calibration_bounds_preserve_defaults_and_checkpoints(tmp_path:
             ModelConfig(features=norm.features, parameter_lower=bad_lower, parameter_upper=ga_upper),
             norm,
         )
+
+
+def test_kda_segment_checkpointing_matches_uncheckpointed_and_propagates_across_boundaries() -> None:
+    from hydrologeez.hybrid.encoders import kda_recurrence
+
+    torch.manual_seed(31)
+    batch, days, heads, keys = 2, 11, 1, 6
+    base_q = torch.randn(batch, days, heads, keys, dtype=torch.float64)
+    base_k = torch.randn(batch, days, heads, keys, dtype=torch.float64)
+    base_v = torch.randn(batch, days, heads, keys, dtype=torch.float64)
+    base_decay = -torch.rand(batch, days, heads, keys, dtype=torch.float64) * 0.4
+    base_beta = torch.sigmoid(torch.randn(batch, days, heads, dtype=torch.float64))
+    base_init = torch.randn(batch, heads, keys, keys, dtype=torch.float64)
+
+    ref_args = [t.detach().clone().requires_grad_(True) for t in (base_q, base_k, base_v, base_decay, base_beta)]
+    ref_init = base_init.detach().clone().requires_grad_(True)
+    ref_out, ref_state = kda_recurrence(*ref_args, initial=ref_init)
+    # Objective depends only on the final remainder segment so gradients must cross both segment boundaries.
+    ref_loss = ref_out[:, -2:].square().sum() + ref_state.square().sum()
+    ref_loss.backward()
+
+    chk_args = [t.detach().clone().requires_grad_(True) for t in (base_q, base_k, base_v, base_decay, base_beta)]
+    chk_init = base_init.detach().clone().requires_grad_(True)
+    chk_out, chk_state = kda_recurrence(*chk_args, initial=chk_init, segment_length=4)
+    chk_loss = chk_out[:, -2:].square().sum() + chk_state.square().sum()
+    chk_loss.backward()
+
+    assert_close(chk_out, ref_out, rtol=1e-12, atol=1e-12)
+    assert_close(chk_state, ref_state, rtol=1e-12, atol=1e-12)
+    assert chk_init.grad is not None and ref_init.grad is not None
+    assert bool((chk_init.grad.abs() > 1e-6).any())
+    assert_close(chk_init.grad, ref_init.grad, rtol=1e-12, atol=1e-12)
+    for idx, (chk_t, ref_t) in enumerate(zip(chk_args, ref_args, strict=True)):
+        assert chk_t.grad is not None and ref_t.grad is not None
+        if idx > 0:
+            # State-updating inputs (k, v, log_decay, beta) in segment 0 affect the final segment output and state.
+            assert bool((chk_t.grad[:, :4].abs() > 1e-6).any())
+        assert_close(chk_t.grad, ref_t.grad, rtol=1e-12, atol=1e-12)
+
+    # Full-sequence objective also exercises q gradients in every segment.
+    ref_full = [t.detach().clone().requires_grad_(True) for t in (base_q, base_k, base_v, base_decay, base_beta)]
+    chk_full = [t.detach().clone().requires_grad_(True) for t in (base_q, base_k, base_v, base_decay, base_beta)]
+    ro, rs = kda_recurrence(*ref_full)
+    co, cs = kda_recurrence(*chk_full, segment_length=4)
+    (ro.square().sum() + rs.square().sum()).backward()
+    (co.square().sum() + cs.square().sum()).backward()
+    for chk_t, ref_t in zip(chk_full, ref_full, strict=True):
+        assert chk_t.grad is not None and ref_t.grad is not None
+        assert bool((chk_t.grad[:, :4].abs() > 1e-6).any())
+        assert_close(chk_t.grad, ref_t.grad, rtol=1e-12, atol=1e-12)
+
+    with pytest.raises(ValueError, match="segment_length"):
+        kda_recurrence(*ref_args, segment_length=0)
+
+
+def test_hybrid_kda_segment_checkpointing_stages_freeze_and_persistence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hydrologeez.hybrid.encoders as encoders_mod
+    from hydrologeez.hybrid.data import Normalization
+    from hydrologeez.hybrid.model import HybridHBV, ModelConfig
+    from hydrologeez.hybrid.runtime import Batch, Training
+
+    torch.manual_seed(47)
+    values = torch.rand(2, 11, 3) * torch.tensor([15.0, 10.0, 3.0])
+    padding = torch.zeros(2, 11, dtype=torch.bool)
+    padding[1, -1:] = True
+    norm = Normalization.fit(values, padding, ("P", "T", "PET"))
+    attrs = torch.tensor([[0.4, 1.1], [-0.7, 0.2]])
+    forcing = values.transpose(0, 1).unsqueeze(2)
+    area = torch.ones(2, 1)
+    discharge = torch.linspace(0.5, 4.5, 11)[:, None].expand(-1, 2)
+    valid = ~padding.T
+    hidden_mask = torch.zeros_like(values, dtype=torch.bool)
+    hidden_mask[:, 1::3, :] = True
+
+    ref_cfg = ModelConfig(encoder="kda", features=norm.features, attributes=("a1", "a2"), hidden=8)
+    chk_cfg = ModelConfig(encoder="kda", features=norm.features, attributes=("a1", "a2"), hidden=8, segment_length=4)
+
+    torch.manual_seed(101)
+    ref_model = HybridHBV(ref_cfg, norm)
+    torch.manual_seed(101)
+    chk_model = HybridHBV(chk_cfg, norm)
+    assert sum(p.numel() for p in chk_model.parameters()) == sum(p.numel() for p in ref_model.parameters())
+
+    # Compare input and parameter gradients on direct discharge loss
+    ref_met = values.detach().clone().requires_grad_(True)
+    chk_met = values.detach().clone().requires_grad_(True)
+    ref_batch = Batch(ref_met, attrs, padding, forcing, area, discharge=discharge, discharge_valid=valid)
+    chk_batch = Batch(chk_met, attrs, padding, forcing, area, discharge=discharge, discharge_valid=valid)
+
+    ref_tr = Training(ref_model, stage="direct", learning_rate=0.005)
+    chk_tr = Training(chk_model, stage="direct", learning_rate=0.005)
+
+    ref_loss = ref_tr.loss(ref_batch)
+    chk_loss = chk_tr.loss(chk_batch)
+    assert_close(chk_loss, ref_loss, rtol=1e-6, atol=1e-6)
+    ref_loss.backward()
+    chk_loss.backward()
+    assert chk_met.grad is not None and ref_met.grad is not None
+    assert_close(chk_met.grad, ref_met.grad, rtol=1e-5, atol=1e-6)
+    for (k_ref, p_ref), (k_chk, p_chk) in zip(ref_model.named_parameters(), chk_model.named_parameters(), strict=True):
+        assert k_ref == k_chk
+        if p_ref.grad is not None or p_chk.grad is not None:
+            assert p_ref.grad is not None and p_chk.grad is not None
+            assert_close(p_chk.grad, p_ref.grad, rtol=1e-5, atol=1e-6)
+
+    # Compare actual training updates across direct, pretrain, and frozen stages
+    plain_batch = Batch(values, attrs, padding, forcing, area, discharge=discharge, discharge_valid=valid)
+    assert_close(
+        torch.tensor(chk_tr.train_step(plain_batch)),
+        torch.tensor(ref_tr.train_step(plain_batch)),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    ref_tr.set_stage("pretrain")
+    chk_tr.set_stage("pretrain")
+    assert_close(
+        torch.tensor(chk_tr.train_step(plain_batch, hidden=hidden_mask)),
+        torch.tensor(ref_tr.train_step(plain_batch, hidden=hidden_mask)),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+
+    # Frozen and inference paths must not invoke torch.utils.checkpoint.checkpoint
+    ref_tr.set_stage("frozen")
+    chk_tr.set_stage("frozen")
+
+    def unexpected_checkpoint(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("checkpoint must not be called when frozen or in inference")
+
+    monkeypatch.setattr(encoders_mod, "checkpoint", unexpected_checkpoint)
+    assert_close(
+        torch.tensor(chk_tr.train_step(plain_batch)),
+        torch.tensor(ref_tr.train_step(plain_batch)),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    assert_close(chk_tr.predict(plain_batch).outlet, ref_tr.predict(plain_batch).outlet, rtol=1e-6, atol=1e-6)
+
+    # Save and reload preserves segment_length
+    ckpt_path = tmp_path / "kda_segmented.pt"
+    chk_tr.save(ckpt_path)
+    restored = Training.load(ckpt_path)
+    assert restored.model.config.segment_length == 4
+    assert isinstance(restored.model.encoder, encoders_mod.KDA)
+    assert restored.model.encoder.segment_length == 4
+    assert_close(restored.predict(plain_batch).outlet, chk_tr.predict(plain_batch).outlet, rtol=0, atol=0)
+
+    with pytest.raises(ValueError, match="segment_length"):
+        HybridHBV(ModelConfig(encoder="lstm", features=norm.features, segment_length=4), norm)
+    with pytest.raises(ValueError, match="segment_length"):
+        HybridHBV(ModelConfig(encoder="kda", features=norm.features, segment_length=0), norm)
+    with pytest.raises(ValueError, match="segment_length"):
+        HybridHBV(ModelConfig(encoder="kda", features=norm.features, segment_length=True), norm)

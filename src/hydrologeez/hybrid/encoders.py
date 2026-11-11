@@ -10,14 +10,18 @@ import math
 import torch
 from torch import Tensor, nn
 from torch.nn import functional
+from torch.utils.checkpoint import checkpoint
 
 
-def kda_recurrence(
-    q: Tensor, k: Tensor, v: Tensor, log_decay: Tensor, beta: Tensor, initial: Tensor | None = None
-) -> tuple[Tensor, Tensor]:
-    """Prepared inputs [batch,time,head,coordinate]; beta [batch,time,head]."""
-    batch, _, heads, keys = q.shape
-    state = q.new_zeros(batch, heads, keys, v.shape[-1]) if initial is None else initial
+def _validate_segment_length(segment_length: int | None) -> None:
+    if segment_length is not None and (
+        isinstance(segment_length, bool) or not isinstance(segment_length, int) or segment_length < 1
+    ):
+        raise ValueError("segment_length must be a positive integer")
+
+
+def _kda_scan(q: Tensor, k: Tensor, v: Tensor, log_decay: Tensor, beta: Tensor, state: Tensor) -> tuple[Tensor, Tensor]:
+    scale = math.sqrt(q.shape[-1])
     outputs: list[Tensor] = []
     for qt, kt, vt, gt, bt in zip(
         q.unbind(1), k.unbind(1), v.unbind(1), log_decay.unbind(1), beta.unbind(1), strict=True
@@ -25,16 +29,57 @@ def kda_recurrence(
         state = state * gt.exp()[..., None]
         residual = vt - (kt[..., None] * state).sum(-2)
         state = state + bt[..., None, None] * kt[..., None] * residual[..., None, :]
-        outputs.append((qt[..., None] * state).sum(-2) / math.sqrt(keys))
+        outputs.append((qt[..., None] * state).sum(-2) / scale)
     return torch.stack(outputs, 1), state
+
+
+def kda_recurrence(
+    q: Tensor,
+    k: Tensor,
+    v: Tensor,
+    log_decay: Tensor,
+    beta: Tensor,
+    initial: Tensor | None = None,
+    *,
+    segment_length: int | None = None,
+) -> tuple[Tensor, Tensor]:
+    """Prepared inputs [batch,time,head,coordinate]; beta [batch,time,head]."""
+    _validate_segment_length(segment_length)
+    batch, steps, heads, keys = q.shape
+    state = q.new_zeros(batch, heads, keys, v.shape[-1]) if initial is None else initial
+    needs_checkpoint = (
+        segment_length is not None
+        and torch.is_grad_enabled()
+        and any(t.requires_grad for t in (q, k, v, log_decay, beta, state))
+    )
+    if not needs_checkpoint:
+        return _kda_scan(q, k, v, log_decay, beta, state)
+    assert segment_length is not None
+    chunks: list[Tensor] = []
+    for start in range(0, steps, segment_length):
+        stop = start + segment_length
+        seg_out, state = checkpoint(
+            _kda_scan,
+            q[:, start:stop],
+            k[:, start:stop],
+            v[:, start:stop],
+            log_decay[:, start:stop],
+            beta[:, start:stop],
+            state,
+            use_reentrant=False,
+        )
+        chunks.append(seg_out)
+    return torch.cat(chunks, dim=1), state
 
 
 class KDA(nn.Module):
     """Single-head Kimi Delta Attention with key-coordinate decay."""
 
-    def __init__(self, inputs: int, hidden: int) -> None:
+    def __init__(self, inputs: int, hidden: int, *, segment_length: int | None = None) -> None:
         super().__init__()
+        _validate_segment_length(segment_length)
         self.hidden = hidden
+        self.segment_length = segment_length
         self.q = nn.Linear(inputs, hidden, bias=False)
         self.k = nn.Linear(inputs, hidden, bias=False)
         self.v = nn.Linear(inputs, hidden, bias=False)
@@ -55,7 +100,12 @@ class KDA(nn.Module):
         k = k / (k.square().sum(-1, keepdim=True) + 1e-6).sqrt()
         log_decay = -self.a_log.exp() * functional.softplus(self.decay(inputs) + self.dt_bias)
         output, _ = kda_recurrence(
-            q.unsqueeze(2), k.unsqueeze(2), v.unsqueeze(2), log_decay.unsqueeze(2), self.beta(inputs).sigmoid()
+            q.unsqueeze(2),
+            k.unsqueeze(2),
+            v.unsqueeze(2),
+            log_decay.unsqueeze(2),
+            self.beta(inputs).sigmoid(),
+            segment_length=self.segment_length,
         )
         output = output.squeeze(2)
         normalized = output * torch.rsqrt(output.square().mean(-1, keepdim=True) + 1e-5) * self.norm_weight
