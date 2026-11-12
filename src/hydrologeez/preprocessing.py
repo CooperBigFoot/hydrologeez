@@ -9,12 +9,15 @@ import json
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
 
 from hydrologeez.quality_control import CLASSIFICATIONS, HomogeneityQuality
+
+if TYPE_CHECKING:
+    from torch import Tensor
 
 Array = NDArray[np.float64]
 Values = NDArray[np.floating]
@@ -124,9 +127,11 @@ class Standardization:
     count: tuple[int, ...]
     ids: tuple[str, ...] = ()
 
-    def _parameters(self, ids: Sequence[str]) -> tuple[Array, Array]:
+    def _parameters(self, ids: Sequence[str] | None = None) -> tuple[Array, Array]:
         if self.scope == "global":
             return np.array(self.mean), np.array(self.scale)
+        if ids is None:
+            raise ValueError("Per-basin transform requires basin ids")
         positions = {gauge: i for i, gauge in enumerate(self.ids)}
         unseen = [gauge for gauge in ids if gauge not in positions]
         if unseen:
@@ -145,9 +150,9 @@ class Transform:
     units: str
     steps: tuple[Step, ...] = ()
 
-    def forward(self, values: Values, ids: Sequence[str]) -> Array:
-        """Transform [basin] or [day, basin] values; nonfinite values stay nonfinite."""
-        if values.shape[-1] != len(ids):
+    def forward(self, values: Values, ids: Sequence[str] | None = None) -> Array:
+        """Transform [basin] or [..., basin] values; nonfinite values stay nonfinite."""
+        if ids is not None and values.shape[-1] != len(ids):
             raise ValueError("Values need one trailing basin axis matching ids")
         result = np.asarray(values, dtype=np.float64)
         for step in self.steps:
@@ -161,9 +166,9 @@ class Transform:
                 result = (result - mean) / scale
         return result
 
-    def inverse(self, values: Values, ids: Sequence[str]) -> Array:
-        """Undo forward for [basin] or [day, basin] values."""
-        if values.shape[-1] != len(ids):
+    def inverse(self, values: Values, ids: Sequence[str] | None = None) -> Array:
+        """Undo forward for [basin] or [..., basin] values."""
+        if ids is not None and values.shape[-1] != len(ids):
             raise ValueError("Values need one trailing basin axis matching ids")
         result = np.asarray(values, dtype=np.float64)
         for step in reversed(self.steps):
@@ -172,6 +177,47 @@ class Transform:
             else:
                 mean, scale = step._parameters(ids)
                 result = result * scale + mean
+        return result
+
+    def forward_tensor(self, values: "Tensor", ids: Sequence[str] | None = None) -> "Tensor":
+        """Differentiably transform a tensor; nonfinite values stay nonfinite."""
+        import torch
+
+        if ids is not None and values.shape[-1] != len(ids):
+            raise ValueError("Values need one trailing basin axis matching ids")
+        if not values.is_floating_point():
+            raise ValueError("Tensor transform requires floating-point values")
+        result = values
+        for step in self.steps:
+            if isinstance(step, Log):
+                shifted = result + step.offset
+                if bool((torch.isfinite(shifted) & (shifted <= 0)).any()):
+                    raise ValueError("log needs value + offset > 0 for every accepted value")
+                result = torch.log(shifted)
+            else:
+                mean, scale = step._parameters(ids)
+                mean_t = torch.as_tensor(mean, dtype=result.dtype, device=result.device)
+                scale_t = torch.as_tensor(scale, dtype=result.dtype, device=result.device)
+                result = (result - mean_t) / scale_t
+        return result
+
+    def inverse_tensor(self, values: "Tensor", ids: Sequence[str] | None = None) -> "Tensor":
+        """Differentiably undo forward_tensor."""
+        import torch
+
+        if ids is not None and values.shape[-1] != len(ids):
+            raise ValueError("Values need one trailing basin axis matching ids")
+        if not values.is_floating_point():
+            raise ValueError("Tensor transform requires floating-point values")
+        result = values
+        for step in reversed(self.steps):
+            if isinstance(step, Log):
+                result = torch.exp(result) - step.offset
+            else:
+                mean, scale = step._parameters(ids)
+                mean_t = torch.as_tensor(mean, dtype=result.dtype, device=result.device)
+                scale_t = torch.as_tensor(scale, dtype=result.dtype, device=result.device)
+                result = result * scale_t + mean_t
         return result
 
     def to_json(self) -> dict[str, Any]:

@@ -75,17 +75,22 @@ Rules:
 from hydrologeez.hybrid.camels import prepared_inputs
 from hydrologeez.hybrid.data import Normalization
 from hydrologeez.hybrid.model import HybridHBV, ModelConfig
+from hydrologeez.hybrid.runtime import Training
 from hydrologeez.preprocessing import PreparedDataset
 
 dataset = PreparedDataset.read(output)
+assert dataset.discharge is not None
 features = ("daymet.prcp", "daymet.prcp_was_filled")
 inputs = prepared_inputs(dataset, features=features, attribute_names=("area_gages2",))
 config = ModelConfig(features=features, attributes=("area_gages2",))
 model = HybridHBV(config, Normalization.identity(features))
+training = Training(model, discharge_transform=dataset.discharge.transform)
 batch = inputs.batch(config)
 ```
 
-Prepared inputs are already in final model-input space, so models use `Normalization.identity`. `batch.discharge` stays physical and `batch.discharge_valid` is the stored eligibility mask. `lstm.camels.batch_from_inputs` accepts the same `CamelsInputs`. The transformed target and its inverse are available as `dataset.discharge.target` and `dataset.discharge.transform`; how models train on transformed discharge is not decided here.
+Prepared inputs are already in final model-input space, so models use `Normalization.identity`. `batch.discharge` stays physical and `batch.discharge_valid` is the stored eligibility mask. `lstm.camels.batch_from_inputs` accepts the same `CamelsInputs`, and `lstm.runtime.Training` accepts the same `discharge_transform`.
+
+Both `HybridHBV` and `DischargeLSTM` (`output_activation="softplus"`) emit nonnegative physical discharge in `mm/day` during `predict(batch)`, without silent clipping or double transformation. When `discharge_transform` is supplied to `Training`, `loss(batch)` and `evaluate(batch)` apply `discharge_transform.forward_tensor` differentiably to eligible predictions and targets and compute valid-element-weighted MSE in transformed discharge space. Checkpoints persist `discharge_transform` for reload and resumed training. For ensemble evaluation, invert any transformed member predictions to physical discharge via `transform.inverse` before averaging across members and computing exact NPE.
 
 `CamelsInputs.filled` carries the placeholder positions into hybrid batches. The hybrid encoder sees the stored constant there, marks it as not observed, and never uses it as a reconstruction target.
 

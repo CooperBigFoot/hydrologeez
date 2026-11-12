@@ -456,3 +456,75 @@ def test_hybrid_kda_segment_checkpointing_stages_freeze_and_persistence(
         HybridHBV(ModelConfig(encoder="kda", features=norm.features, segment_length=0), norm)
     with pytest.raises(ValueError, match="segment_length"):
         HybridHBV(ModelConfig(encoder="kda", features=norm.features, segment_length=True), norm)
+
+
+def test_hybrid_transformed_discharge_loss_gradients_and_checkpoint_round_trip(tmp_path: Path) -> None:
+    from hydrologeez.hybrid.data import Normalization
+    from hydrologeez.hybrid.model import HybridHBV, ModelConfig
+    from hydrologeez.hybrid.runtime import Batch, Training
+    from hydrologeez.preprocessing import Field, Log, Standardization, Transform, ZScore, fit
+
+    torch.manual_seed(23)
+    values = torch.rand(2, 8, 3) * torch.tensor([12.0, 8.0, 2.5])
+    padding = torch.zeros(2, 8, dtype=torch.bool)
+    norm = Normalization.fit(values, padding, ("P", "T", "PET"))
+    model = HybridHBV(ModelConfig(encoder="lstm", features=norm.features, attributes=("elev_mean",), hidden=8), norm)
+
+    q_obs_np = np.array(
+        [
+            [-999.0, -999.0],  # warm-up day 0 (ineligible)
+            [0.0, 1.0],
+            [2.0, 4.0],
+            [5.0, float("nan")],
+            [3.0, 9.0],
+            [1.0, 2.0],
+            [4.0, 6.0],
+            [2.0, 3.0],
+        ]
+    )
+    valid_np = np.isfinite(q_obs_np) & (np.arange(8)[:, None] >= 1)
+    q_field = Field(np.where(valid_np, q_obs_np, 0.0), valid_np, "mm/day")
+    pool = np.zeros_like(valid_np)
+    pool[1:6, :] = True
+    discharge_transform = fit([Log(1.0, "mm/day"), ZScore("global")], q_field, ("a", "b"), pool)
+
+    batch = Batch(
+        values,
+        torch.tensor([[0.2], [-0.4]]),
+        padding,
+        values.transpose(0, 1).unsqueeze(2),
+        torch.ones(2, 1),
+        discharge=torch.from_numpy(q_obs_np.astype(np.float32)),
+        discharge_valid=torch.from_numpy(valid_np),
+    )
+    training = Training(model, stage="direct", learning_rate=0.01, discharge_transform=discharge_transform)
+
+    # Loss matches independent worked log1p + global z-score MSE while predict stays in physical mm/day.
+    physical_out = training.predict(batch).outlet
+    assert (physical_out >= 0).all()
+    step_z = discharge_transform.steps[1]
+    assert isinstance(step_z, Standardization)
+    mean, scale = step_z.mean[0], step_z.scale[0]
+    assert batch.discharge is not None and batch.discharge_valid is not None
+    valid_t = batch.discharge_valid & torch.isfinite(batch.discharge)
+    expected_pred_z = (torch.log1p(physical_out[valid_t]) - mean) / scale
+    expected_obs_z = (torch.log1p(batch.discharge[valid_t]) - mean) / scale
+    expected_loss = float((expected_pred_z - expected_obs_z).square().mean())
+    assert_close(torch.tensor(training.evaluate(batch)), torch.tensor(expected_loss), rtol=1e-6, atol=1e-6)
+
+    loss0 = training.train_step(batch)
+    assert_close(torch.tensor(loss0), torch.tensor(expected_loss), rtol=1e-6, atol=1e-6)
+
+    ckpt = tmp_path / "hybrid_transformed.pt"
+    training.save(ckpt)
+    restored = Training.load(ckpt)
+    assert restored.discharge_transform == discharge_transform
+    assert_close(restored.predict(batch).outlet, training.predict(batch).outlet, rtol=0, atol=0)
+    assert restored.evaluate(batch) == training.evaluate(batch)
+    assert restored.train_step(batch) == training.train_step(batch)
+
+    with pytest.raises(ValueError, match="mse"):
+        Training(model, discharge_loss="soft_npe", discharge_transform=discharge_transform)
+    per_basin = Transform("mm/day", (Standardization("basin", (0.0, 1.0), (1.0, 2.0), (3, 3), ("a", "b")),))
+    with pytest.raises(ValueError, match="global"):
+        Training(model, discharge_transform=per_basin)

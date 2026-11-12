@@ -328,3 +328,48 @@ def test_archive_evidence_feeds_caller_exclusions(tmp_path: Path) -> None:
         homogeneity_flags(assessed, ids, "P50", ("suspect",))
     with pytest.raises(ValueError, match="classification"):
         homogeneity_flags(assessed, ids, "MEAN", ("bad",))
+
+
+def test_tensor_transform_gradients_round_trip_and_physical_ensemble_inversion() -> None:
+    torch = pytest.importorskip("torch")
+    from torch.testing import assert_close
+
+    from hydrologeez.metrics import evaluate
+
+    source = field([[0.0, 1.0], [9.0, 99.0]])
+    everywhere = np.ones((2, 2), dtype=np.bool_)
+    transform = fit([Log(1.0, "mm/day"), ZScore("global")], source, IDS, everywhere)
+
+    # Global transform works with or without basin ids on arbitrary tensor shapes and preserves gradients.
+    physical = torch.tensor([[0.0, 1.0], [9.0, 99.0]], dtype=torch.float64, requires_grad=True)
+    expected = torch.from_numpy(transform.forward(source.values))
+    transformed = transform.forward_tensor(physical)
+    assert_close(transformed, expected, rtol=1e-12, atol=1e-12)
+    assert_close(transform.forward_tensor(physical, IDS), expected, rtol=1e-12, atol=1e-12)
+    assert_close(transform.inverse_tensor(transformed), physical, rtol=1e-12, atol=1e-12)
+    assert torch.autograd.gradcheck(lambda q: transform.forward_tensor(q).square().sum(), (physical,))
+
+    with pytest.raises(ValueError, match="log"):
+        transform.forward_tensor(torch.tensor([-1.0], dtype=torch.float64))
+
+    per_basin = fit([ZScore("basin")], source, IDS, everywhere)
+    with pytest.raises(ValueError, match="ids"):
+        per_basin.forward(source.values)
+    with pytest.raises(ValueError, match="ids"):
+        per_basin.forward_tensor(physical)
+
+    # Inverting members to physical discharge before averaging differs from averaging in log space.
+    observed = np.array([1.0, 5.0, 20.0])
+    dates = np.arange(np.datetime64("2000-01-01"), np.datetime64("2000-01-04"))
+    member_physical = np.array(
+        [
+            [[0.5], [3.0], [10.0]],
+            [[1.5], [7.0], [30.0]],
+        ]
+    )
+    member_transformed = transform.forward(member_physical, ("a",))
+    inverted_then_averaged = transform.inverse(member_transformed, ("a",)).mean(axis=0)[:, 0]
+    averaged_then_inverted = transform.inverse(member_transformed.mean(axis=0), ("a",))[:, 0]
+    assert_allclose(inverted_then_averaged, observed, rtol=1e-12, atol=1e-12)
+    assert not np.allclose(averaged_then_inverted, observed)
+    assert_allclose(evaluate(observed, inverted_then_averaged, dates=dates)["kge_np"], 1.0, atol=1e-12)
