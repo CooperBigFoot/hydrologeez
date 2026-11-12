@@ -17,9 +17,8 @@ import numpy as np
 from hydrologeez.preprocessing import Exclusion, Field, Log, PhysicalForcing, Transform, ZScore, fit, prepare
 
 # Named boolean evidence from the QC archive: daily reasons [day, basin], basin assessments [basin].
-excluded = Exclusion(daily=("negative", "constant_run", "seasonal_outlier"), basin=("inhomogeneous",)).mask(
-    qc_daily, qc_basin
-)
+rule = Exclusion(daily=("negative", "constant_run", "seasonal_outlier"), basin=("inhomogeneous",))
+excluded = rule.mask(q_mm_day.shape, qc_daily, qc_basin)
 prcp = Field(meteorology.values[:, :, 0].T, meteorology.valid[:, :, 0].T, "mm/day")
 area = Field(area_km2, np.isfinite(area_km2), "km2")
 discharge = Field(q_mm_day, observed & ~excluded, "mm/day")
@@ -37,7 +36,7 @@ prepare(
     forcing=PhysicalForcing(("daymet.prcp", "daymet.tmean", "daymet.pet"), ("mm/day", "degC", "mm/day"), physical),
     discharge=discharge,
     discharge_transform=fit([Log(0.01, "mm/day"), ZScore()], discharge, ids, fold_training_pool),
-    recipe={"exclusion": {"daily": [...], "basin": [...]}, "pools": {...}},
+    recipe={"exclusion": {"daily": [...], "basin": [...]}, "pools": {"daymet.prcp": "...", "discharge": "..."}},
     provenance={"qc_archive": "...", "meteorology": "..."},
 )
 ```
@@ -48,10 +47,11 @@ Rules:
 - Chains run in the declared order. `Log(offset, units)` computes `log(value + offset)`; its units must match the field. `Transform.inverse` reverses the chain.
 - `ZScore("global")` fits one mean and scale per field. `ZScore("basin")` fits one per basin and needs daily values. A basin without pooled values gets no per-basin parameters, so applying the transform to it raises.
 - Constant pooled values get scale 1, so their standardized values are 0. Population standard deviation is used, as in `hybrid.data.Normalization`, which shares the same implementation.
+- `prepared.json` stores fitted parameters and counts, not pool masks. The recipe must identify the fitting pool of every transform, such as basins and date ranges.
 - Fit discharge transforms on the supervised training pool of each fold. Inputs may use another explicitly authorized pool, such as an unlabeled historical pool.
 - After transforming, `prepare` replaces every non-accepted input with `fill_value` (default 0) and records `<field>_was_filled`. There is no interpolation or forward fill.
 - Discharge keeps physical values, a transformed target that is NaN where ineligible, and an eligibility mask. Filled or excluded targets are never eligible.
-- Physical P/T/PET must be valid. They are stored unchanged for HBV and are never filled.
+- Physical P/T/PET must be valid. They are stored as float32, like `hybrid.camels.load_inputs`, and are never transformed or filled.
 
 ## Consume repeatedly
 
@@ -71,7 +71,7 @@ batch = inputs.batch(config)
 
 Prepared inputs are already in final model-input space, so models use `Normalization.identity`. `batch.discharge` stays physical and `batch.discharge_valid` is the stored eligibility mask. `lstm.camels.batch_from_inputs` accepts the same `CamelsInputs`. The transformed target and its inverse are available as `dataset.discharge.target` and `dataset.discharge.transform`; how models train on transformed discharge is not decided here.
 
-Filled inputs are finite, so hybrid pretraining hidden masks must exclude `_was_filled` positions.
+`CamelsInputs.filled` carries the placeholder positions into hybrid batches. The hybrid encoder sees the stored constant there, marks it as not observed, and never uses it as a reconstruction target.
 
 ## Layout
 

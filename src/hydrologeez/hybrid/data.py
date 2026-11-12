@@ -46,11 +46,15 @@ class Prepared:
     targets: Tensor
 
 
-def prepare(values: Tensor, padding: Tensor, hidden: Tensor, normalization: Normalization) -> Prepared:
+def prepare(
+    values: Tensor, padding: Tensor, hidden: Tensor, normalization: Normalization, filled: Tensor | None = None
+) -> Prepared:
     """Channels: normalized visible values, observed-visible flags, hidden flags.
 
     Artificially hidden values never enter inputs. Missing/padded values never
     become targets. No per-window fitting or target-derived imputation occurs.
+    ``filled`` marks finite placeholders from a prepared dataset: they are not
+    observed and never targets, but keep their stored value unless hidden.
     """
     if (
         values.ndim != 3
@@ -61,9 +65,15 @@ def prepare(values: Tensor, padding: Tensor, hidden: Tensor, normalization: Norm
         raise ValueError("inconsistent meteorological input shapes")
     if padding.dtype != torch.bool or hidden.dtype != torch.bool:
         raise ValueError("masks must be boolean")
-    valid = torch.isfinite(values) & ~padding[..., None]
+    if filled is None:
+        filled = torch.zeros_like(hidden)
+    elif filled.shape != values.shape or filled.dtype != torch.bool:
+        raise ValueError("filled mask must be boolean and match values")
+    valid = torch.isfinite(values) & ~padding[..., None] & ~filled
     targets = hidden & valid
     visible = valid & ~hidden
     normalized = torch.where(valid, (values - normalization.mean) / normalization.scale, 0.0)
-    inputs = torch.cat((torch.where(visible, normalized, 0.0), visible.to(values.dtype), targets.to(values.dtype)), -1)
+    placeholder = torch.where(filled & ~hidden & ~padding[..., None], values, 0.0)
+    shown = torch.where(visible, normalized, placeholder)
+    inputs = torch.cat((shown, visible.to(values.dtype), targets.to(values.dtype)), -1)
     return Prepared(inputs, normalized, targets)

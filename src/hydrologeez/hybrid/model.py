@@ -121,7 +121,14 @@ class HybridHBV(nn.Module):
             self.encoder.eval()
         return self
 
-    def represent(self, values: Tensor, attributes: Tensor, padding: Tensor, hidden: Tensor | None = None) -> Tensor:
+    def represent(
+        self,
+        values: Tensor,
+        attributes: Tensor,
+        padding: Tensor,
+        hidden: Tensor | None = None,
+        filled: Tensor | None = None,
+    ) -> Tensor:
         if attributes.shape != (values.shape[0], len(self.config.attributes)) or not bool(
             torch.isfinite(attributes).all()
         ):
@@ -137,6 +144,7 @@ class HybridHBV(nn.Module):
             padding,
             torch.zeros_like(values, dtype=torch.bool) if hidden is None else hidden,
             self.normalization,
+            filled,
         )
         inputs = torch.cat((prepared.inputs, attributes[:, None, :].expand(-1, values.shape[1], -1)), -1)
         return self.encoder(inputs)
@@ -156,8 +164,9 @@ class HybridHBV(nn.Module):
         forcing: Tensor,
         area: Tensor,
         initial: Memory | None = None,
+        filled: Tensor | None = None,
     ) -> Result:
-        parameters = self.physical_parameters(self.represent(values, attributes, padding), padding)
+        parameters = self.physical_parameters(self.represent(values, attributes, padding, filled=filled), padding)
         zones = parameters[:, None, :8].expand(-1, forcing.shape[2], -1)
         return simulate(
             forcing, area, zones, parameters[:, 8:12], parameters[:, 12], initial, support=self.config.routing_support

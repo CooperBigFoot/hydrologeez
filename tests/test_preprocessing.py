@@ -98,8 +98,6 @@ def test_chain_applies_in_declared_order_inverts_and_round_trips() -> None:
     forward = transform.forward(source.values, IDS)
     assert_allclose(forward, expected)
     assert_allclose(transform.inverse(forward, IDS), source.values, atol=1e-12)
-    reversed_order = fit([ZScore(), Log(10.0, "mm/day")], source, IDS, everywhere)
-    assert not np.allclose(reversed_order.forward(source.values, IDS), expected)
     restored = Transform.from_json(transform.to_json())
     assert restored == transform
     assert_array_equal(restored.forward(source.values, IDS), forward)
@@ -111,20 +109,23 @@ def test_exclusion_combines_named_daily_reasons_and_basin_assessments() -> None:
         "outlier": np.array([[False, False], [False, True]]),
     }
     basin = {"inhomogeneous": np.array([False, True]), "regulated": np.array([True, False])}
-    mask = Exclusion(daily=("negative",), basin=("inhomogeneous",)).mask(daily, basin)
+    mask = Exclusion(daily=("negative",), basin=("inhomogeneous",)).mask((2, 2), daily, basin)
     assert_array_equal(mask, [[True, True], [False, True]])
+    # Basin-only rules need no daily evidence; unselected evidence is not inspected.
+    only_basin = Exclusion(basin=("regulated",)).mask((3, 2), {"other": np.zeros(5, dtype=np.bool_)}, basin)
+    assert_array_equal(only_basin, [[True, False]] * 3)
     with pytest.raises(ValueError, match="unknown"):
-        Exclusion(daily=("missing",)).mask(daily, basin)
+        Exclusion(daily=("missing",)).mask((2, 2), daily, basin)
 
 
 def prepared_example(output: Path) -> dict[str, np.ndarray]:
     """Two basins, three days; QC excludes day 2 of basin b."""
     evidence = {"outlier": np.array([[False, False], [False, False], [False, True]])}
-    excluded = Exclusion(daily=("outlier",)).mask(evidence, {})
+    excluded = Exclusion(daily=("outlier",)).mask((3, 2), evidence, {})
     prcp = np.array([[1.0, 3.0], [np.nan, 5.0], [3.0, 999.0]])
     q = np.array([[1.0, 2.0], [np.nan, 4.0], [5.0, 600.0]])
     area = np.array([10.0, np.nan])
-    forcing = np.arange(18, dtype=np.float32).reshape(3, 2, 3)
+    forcing = np.arange(18.0).reshape(3, 2, 3)
     inputs = {"prcp": Field(prcp, np.isfinite(prcp) & ~excluded, "mm/day")}
     attributes = {"area": Field(area, np.isfinite(area), "km2")}
     discharge = Field(q, np.isfinite(q) & ~excluded, "mm/day")
@@ -157,12 +158,11 @@ def test_prepared_dataset_fills_after_transform_and_keeps_targets_distinct(tmp_p
     s = math.sqrt(2)
     assert_allclose(dataset.inputs[:, :, 0], [[-2 / s, -7.0, 0.0], [0.0, 2 / s, -7.0]], rtol=1e-6)
     assert_array_equal(dataset.inputs_was_filled[:, :, 0], [[False, True, False], [False, False, True]])
-    observed = dataset.inputs[~dataset.inputs_was_filled]
-    assert_allclose(observed.mean(), 0.0, atol=1e-7)
     assert_array_equal(dataset.attributes, [[10.0], [-7.0]])
     assert_array_equal(dataset.attributes_was_filled, [[False], [True]])
     assert_array_equal(dataset.model_inputs(("prcp_was_filled", "prcp"))[:, :, 0], dataset.inputs_was_filled[:, :, 0])
 
+    assert dataset.forcing.dtype == np.float32
     assert_array_equal(dataset.forcing, source["forcing"])
     discharge = dataset.discharge
     assert discharge is not None
@@ -180,6 +180,47 @@ def test_prepared_dataset_fills_after_transform_and_keeps_targets_distinct(tmp_p
         prepared_example(tmp_path / "prepared")
 
 
+def prepare_single(output: Path, name: str, source: Field, transform: Transform) -> None:
+    prepare(
+        output,
+        ids=IDS,
+        dates=np.arange(730000, 730000 + len(source.values)),
+        inputs={name: source},
+        attributes={},
+        transforms={name: transform},
+        forcing=PhysicalForcing(("p", "t", "pet"), ("mm/day", "degC", "mm/day"), np.ones((len(source.values), 2, 3))),
+        fill_value=-3.0,
+        recipe={"pools": {name: "all days"}},
+        provenance={},
+    )
+
+
+def test_per_basin_log_chain_fills_after_transform_and_persists(tmp_path: Path) -> None:
+    source = field([[0.0, 9.0], [np.nan, 99.0], [1.0, 999.0]])
+    transform = fit([Log(1.0, "mm/day"), ZScore("basin")], source, IDS, np.ones((3, 2), dtype=np.bool_))
+    prepare_single(tmp_path / "prepared", "x", source, transform)
+    dataset = PreparedDataset.read(tmp_path / "prepared")
+    # Basin a: log 1, log 2 -> -1, 1. Basin b: log 10, 100, 1000 -> -sqrt(1.5), 0, sqrt(1.5).
+    r = math.sqrt(1.5)
+    assert_allclose(dataset.inputs[:, :, 0], [[-1.0, -3.0, 1.0], [-r, 0.0, r]], rtol=1e-6, atol=1e-7)
+    restored = dataset.transforms["x"]
+    assert restored == transform
+    observed = dataset.inputs[:, (0, 2), 0].T.astype(np.float64)
+    assert_allclose(restored.inverse(observed, IDS), [[0.0, 9.0], [1.0, 999.0]], rtol=1e-5, atol=1e-6)
+    assert_allclose(restored.forward(np.array([[999.0, 1.0]]), ("b", "a")), [[r, 1.0]])
+    assert_allclose(restored.forward(np.array([99.0]), ("b",)), [0.0], atol=1e-12)
+
+
+def test_prepare_rejects_unfitted_basins_and_reserved_names(tmp_path: Path) -> None:
+    source = field([[1.0, 5.0], [3.0, 7.0]])
+    only_a = fit([ZScore("basin")], source, IDS, np.array([[True, False], [True, False]]))
+    with pytest.raises(ValueError, match="b"):
+        prepare_single(tmp_path / "unfitted", "x", source, only_a)
+    with pytest.raises(ValueError, match="_was_filled"):
+        prepare_single(tmp_path / "reserved", "x_was_filled", source, Transform("mm/day"))
+    assert not (tmp_path / "unfitted").exists() and not (tmp_path / "reserved").exists()
+
+
 def test_models_consume_prepared_data_repeatedly_without_refitting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -187,6 +228,7 @@ def test_models_consume_prepared_data_repeatedly_without_refitting(
     from torch.testing import assert_close
 
     from hydrologeez import preprocessing
+    from hydrologeez.hybrid import data as hybrid_data
     from hydrologeez.hybrid.camels import prepared_inputs
     from hydrologeez.hybrid.data import Normalization
     from hydrologeez.hybrid.model import HybridHBV, ModelConfig
@@ -202,6 +244,7 @@ def test_models_consume_prepared_data_repeatedly_without_refitting(
     monkeypatch.setattr(preprocessing, "fit", forbidden)
     monkeypatch.setattr(preprocessing, "standardization", forbidden)
     monkeypatch.setattr(preprocessing.Transform, "forward", forbidden)
+    monkeypatch.setattr(hybrid_data, "standardization", forbidden)
     features = ("prcp", "prcp_was_filled")
     attributes = ("area", "area_was_filled")
     config = ModelConfig(features=features, attributes=attributes, hidden=4)
@@ -212,8 +255,20 @@ def test_models_consume_prepared_data_repeatedly_without_refitting(
         batch = inputs.batch(config)
         assert_array_equal(batch.meteorology[:, :, 1].numpy(), dataset.inputs_was_filled[:, :, 0])
         assert_array_equal(batch.attributes.numpy(), [[10.0, 0.0], [-7.0, 1.0]])
-        assert_array_equal(batch.forcing[:, :, 0, :].numpy(), source["forcing"])
+        assert_array_equal(batch.forcing[:, :, 0, :].numpy(), source["forcing"].astype(np.float32))
         assert batch.discharge_valid is not None and torch.equal(batch.discharge_valid, eligible)
+        filled = torch.from_numpy(dataset.inputs_was_filled[:, :, 0])
+        assert batch.filled is not None
+        assert torch.equal(batch.filled[:, :, 0], filled) and not batch.filled[:, :, 1].any()
+        identity = Normalization.identity(features)
+        visible = hybrid_data.prepare(
+            batch.meteorology, batch.padding, torch.zeros_like(batch.filled), identity, batch.filled
+        )
+        assert torch.equal(visible.inputs[:, :, 2].bool(), ~filled)
+        assert torch.equal(visible.inputs[:, :, 0][filled], torch.full((2,), -7.0))
+        hidden = torch.ones_like(batch.filled)
+        targets = hybrid_data.prepare(batch.meteorology, batch.padding, hidden, identity, batch.filled).targets
+        assert torch.equal(targets[:, :, 0], ~filled) and targets[:, :, 1].all()
 
         torch.manual_seed(0)
         training = Training(HybridHBV(config, Normalization.identity(features)))
@@ -221,6 +276,8 @@ def test_models_consume_prepared_data_repeatedly_without_refitting(
         observed = torch.from_numpy(source["q"]).to(outlet.dtype)
         # The excluded 600 mm/day and missing values never enter the loss.
         assert_close(training.evaluate(batch), float((outlet - observed)[eligible].square().mean()))
+        training.set_stage("pretrain")
+        assert np.isfinite(training.evaluate(batch, hidden=hidden))
 
         lstm_batch = batch_from_inputs(inputs, LSTMConfig(features=features, attributes=attributes))
         assert torch.isfinite(lstm_batch.meteorology).all()

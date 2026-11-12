@@ -18,6 +18,7 @@ Array = NDArray[np.float64]
 Values = NDArray[np.floating]
 Mask = NDArray[np.bool_]
 Scope = Literal["global", "basin"]
+FILLED_SUFFIX = "_was_filled"
 
 
 def standardization(values: Array, selected: Mask, axis: int | tuple[int, ...]) -> tuple[Array, Array]:
@@ -63,15 +64,14 @@ class Exclusion:
     daily: tuple[str, ...] = ()
     basin: tuple[str, ...] = ()
 
-    def mask(self, daily: Mapping[str, Mask], basin: Mapping[str, Mask]) -> Mask:
-        """Excluded observations as [day, basin]; the evidence is not modified."""
+    def mask(self, shape: tuple[int, int], daily: Mapping[str, Mask], basin: Mapping[str, Mask]) -> Mask:
+        """Excluded observations as [day, basin]; only selected evidence is read, never modified."""
         if not set(self.daily) <= daily.keys() or not set(self.basin) <= basin.keys():
             raise ValueError("Exclusion names unknown QC evidence")
-        shapes = {array.shape for array in daily.values()}
-        if len(shapes) != 1 or len(shape := shapes.pop()) != 2:
-            raise ValueError("Daily QC evidence must share one [day, basin] shape")
-        if any(array.shape != shape[1:] for array in basin.values()):
-            raise ValueError("Basin assessments must align with daily evidence basins")
+        if any(daily[name].shape != shape for name in self.daily) or any(
+            basin[name].shape != shape[1:] for name in self.basin
+        ):
+            raise ValueError("Selected QC evidence must align with the [day, basin] shape")
         excluded = np.zeros(shape, dtype=np.bool_)
         for name in self.daily:
             excluded |= daily[name]
@@ -282,7 +282,8 @@ def prepare(
     does not accept are replaced by ``fill_value`` after transforming and
     flagged in ``<field>_was_filled``. Discharge keeps physical values, a
     transformed target that is NaN where ineligible, and the eligibility mask.
-    Physical forcing must be valid; it is stored unchanged and never filled.
+    Physical forcing must be valid; it is stored as float32, like
+    ``hybrid.camels.load_inputs``, and is never transformed or filled.
     ``recipe`` and ``provenance`` are caller JSON describing selections,
     exclusions, fitting pools and sources. The output directory must not exist;
     metadata is written last as the completion marker.
@@ -292,6 +293,8 @@ def prepare(
         raise ValueError("Select unique basins and consecutive daily dates")
     if not inputs or set(inputs) & set(attributes) or transforms.keys() != inputs.keys() | attributes.keys():
         raise ValueError("Name each input and attribute once and give each a fitted transform")
+    if any(name.endswith(FILLED_SUFFIX) for name in transforms):
+        raise ValueError(f"Field names ending in {FILLED_SUFFIX} are reserved for filled flags")
     if any(item.values.shape != (days, basins) for item in inputs.values()) or any(
         item.values.shape != (basins,) for item in attributes.values()
     ):
@@ -333,15 +336,12 @@ def prepare(
     np.save(
         output / "attributes_was_filled.npy", np.array([f for _, f in static], dtype=np.bool_).T.reshape(basins, -1)
     )
-    np.save(output / "forcing.npy", forcing.values)
+    np.save(output / "forcing.npy", forcing.values.astype(np.float32))
     if discharge is not None and target is not None:
         np.save(output / "discharge.npy", discharge.values)
         np.save(output / "target.npy", target)
         np.save(output / "target_eligible.npy", discharge.accepted)
     (output / "prepared.json").write_text(text)
-
-
-FILLED_SUFFIX = "_was_filled"
 
 
 @dataclass(frozen=True)
@@ -367,7 +367,6 @@ class PreparedDataset:
     [day, basin, P/T/PET].
     """
 
-    directory: Path
     ids: tuple[str, ...]
     dates: NDArray[np.int64]
     features: tuple[str, ...]
@@ -381,7 +380,7 @@ class PreparedDataset:
     transforms: dict[str, Transform]
     physical: tuple[str, str, str]
     physical_units: tuple[str, str, str]
-    forcing: Values
+    forcing: NDArray[np.float32]
     discharge: PreparedDischarge | None
     fill_value: float
     recipe: dict[str, Any]
@@ -404,7 +403,6 @@ class PreparedDataset:
             return np.load(directory / f"{name}.npy", allow_pickle=False)
 
         return cls(
-            directory,
             tuple(metadata["ids"]),
             np.arange(metadata["start"], metadata["stop"], dtype=np.int64),
             features,
@@ -436,6 +434,14 @@ class PreparedDataset:
     def model_inputs(self, names: Sequence[str]) -> NDArray[np.float32]:
         """Select [basin, day, name] columns; ``<field>_was_filled`` names select flags as 0/1."""
         return np.stack([self._column(name, self.features, self.inputs, self.inputs_was_filled) for name in names], -1)
+
+    def model_inputs_filled(self, names: Sequence[str]) -> Mask:
+        """[basin, day, name] filled positions for model_inputs; flag columns are never filled."""
+        filled = np.zeros((*self.inputs.shape[:2], len(names)), dtype=np.bool_)
+        for j, name in enumerate(names):
+            if name in self.features:
+                filled[:, :, j] = self.inputs_was_filled[:, :, self.features.index(name)]
+        return filled
 
     def model_attributes(self, names: Sequence[str]) -> NDArray[np.float32]:
         """Select [basin, name] columns; ``<field>_was_filled`` names select flags as 0/1."""

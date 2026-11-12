@@ -32,6 +32,7 @@ class CamelsInputs:
     observations: Observations | None
     discharge: Tensor | None
     discharge_valid: Tensor | None
+    filled: Tensor | None = None  # [basin, day, feature], prepared-dataset placeholders
 
     def batch(
         self,
@@ -56,6 +57,7 @@ class CamelsInputs:
         if meteorology.shape[0] == 0 or meteorology.shape[1] == 0 or forcing.shape[0] == 0:
             raise ValueError("Batch must contain basins, context and simulation days")
         valid = None if self.discharge_valid is None else self.discharge_valid[simulation, basins].to(device)
+        filled = None if self.filled is None else self.filled[basins, context].to(device)
         if evaluation_mask is not None:
             if valid is None or evaluation_mask.shape != valid.shape or evaluation_mask.dtype != torch.bool:
                 raise ValueError("Evaluation mask needs matching authorized discharge")
@@ -68,6 +70,7 @@ class CamelsInputs:
             torch.ones((len(meteorology), 1), device=device),
             None if self.discharge is None else self.discharge[simulation, basins].to(device),
             valid,
+            filled=filled,
         )
 
 
@@ -155,10 +158,11 @@ def prepared_inputs(
 
     Neural features and attributes are already in final model-input space, so
     pair them with ``Normalization.identity``. Names may select
-    ``<field>_was_filled`` flags. Forcing stays physical for HBV. Discharge
-    stays physical; discharge_valid is the stored target-eligibility mask, so
-    filled or excluded targets never enter loss or evaluation. Filled inputs
-    are finite: exclude ``_was_filled`` positions from pretraining hidden masks.
+    ``<field>_was_filled`` flags. ``filled`` marks placeholders, so the hybrid
+    encoder does not treat them as observed or reconstruction targets. Forcing
+    stays physical for HBV. Discharge stays physical; discharge_valid is the
+    stored target-eligibility mask, so filled or excluded targets never enter
+    loss or evaluation.
     """
     if not features or len(set(features)) != len(features) or len(set(attribute_names)) != len(attribute_names):
         raise ValueError("Select unique nonempty neural features and unique attributes")
@@ -173,4 +177,5 @@ def prepared_inputs(
         None,
         None if discharge is None else torch.from_numpy(discharge.physical.astype(np.float32)),
         None if discharge is None else torch.from_numpy(discharge.eligible),
+        torch.from_numpy(dataset.model_inputs_filled(features)),
     )

@@ -34,7 +34,7 @@ Feature order is a caller contract: tensors have no column labels. Check incomin
 
 Fit `data.Normalization.fit(values, padding, features)` explicitly on the authorized meteorological training pool. It ignores missing and padded observations, uses population standard deviation, and gives constant features scale one. It never fits inside a prediction or training step. Checkpoints store its mean, scale and feature order.
 
-For a [prepared experiment dataset](experiment-preprocessing.md), inputs are already transformed and filled: build `CamelsInputs` with `camels.prepared_inputs` and use `Normalization.identity(features)`.
+For a [prepared experiment dataset](experiment-preprocessing.md), inputs are already transformed and filled: build `CamelsInputs` with `camels.prepared_inputs` and use `Normalization.identity(features)`. Its `filled` mask reaches `Batch.filled`, so placeholders are neither visible observations nor reconstruction targets.
 
 `data.prepare` supplies three channels per feature group: normalized visible values, visible-observation indicators, and synthetic-hidden indicators. Hidden values are zeroed only *after* fixed normalization, and never enter neural inputs. Genuine missing and padding values are not reconstruction targets. Legitimate normalized zeros remain distinguishable through indicators. The caller supplies a boolean synthetic mask; the example independently hides 25% of entries. Hidden valid targets alone contribute to normalized MSE. A mask with no targets raises an error. This is a starting scheme, not a scientific masking optimum.
 
