@@ -11,7 +11,7 @@ import numpy as np
 import torch
 
 from hydrologeez.camels import Camels
-from hydrologeez.camels_meteorology import CamelsMeteorology
+from hydrologeez.camels_meteorology import CamelsMeteorology, Meteorology
 from hydrologeez.hybrid.camels import load_inputs
 from hydrologeez.hybrid.data import Normalization
 from hydrologeez.hybrid.model import HybridHBV, ModelConfig
@@ -59,6 +59,7 @@ def main() -> None:
         observations=Camels(args.observations),
     )
     adapter_seconds = time.perf_counter() - start
+    assert isinstance(inputs.source, Meteorology)
     arrays = (inputs.source.values, inputs.source.valid, inputs.source.present)
     resident_bytes = sum(array.nbytes for array in arrays)
     resident_bytes += sum(t.numel() * t.element_size() for t in (inputs.meteorology, inputs.attributes, inputs.forcing))

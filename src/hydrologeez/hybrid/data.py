@@ -6,6 +6,7 @@ import torch
 from torch import Tensor
 
 from hydrologeez.losses import masked_mse as masked_mse
+from hydrologeez.preprocessing import standardization
 
 
 @dataclass(frozen=True)
@@ -25,13 +26,17 @@ class Normalization:
         ):
             raise ValueError("expected unique features and [basin, day, feature] values")
         valid = torch.isfinite(values) & ~padding[..., None]
-        count = valid.sum((0, 1))
-        if bool((count == 0).any()):
-            raise ValueError("each feature needs observed training values")
-        mean = torch.where(valid, values, 0.0).sum((0, 1)) / count
-        variance = torch.where(valid, values - mean, 0.0).square().sum((0, 1)) / count
-        scale = variance.sqrt()
-        return cls(mean, torch.where(scale > 0, scale, torch.ones_like(scale)), features)
+        mean, scale = standardization(values.detach().cpu().double().numpy(), valid.cpu().numpy(), (0, 1))
+        return cls(
+            torch.as_tensor(mean, dtype=values.dtype, device=values.device),
+            torch.as_tensor(scale, dtype=values.dtype, device=values.device),
+            features,
+        )
+
+    @classmethod
+    def identity(cls, features: tuple[str, ...]) -> "Normalization":
+        """For inputs already in final model-input space, such as a PreparedDataset."""
+        return cls(torch.zeros(len(features)), torch.ones(len(features)), features)
 
 
 @dataclass(frozen=True)

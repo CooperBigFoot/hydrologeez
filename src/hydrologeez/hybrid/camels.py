@@ -1,4 +1,4 @@
-"""Resident CAMELS tensors with explicit feature, physical and observation pools."""
+"""Resident CAMELS tensors from authorized reader pools or prepared experiment datasets."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -9,6 +9,7 @@ from torch import Tensor
 
 from hydrologeez.camels import Camels, CamelsAttributes, Observations
 from hydrologeez.camels_meteorology import CamelsMeteorology, Meteorology
+from hydrologeez.preprocessing import PreparedDataset
 
 from .model import ModelConfig
 from .runtime import Batch
@@ -22,7 +23,7 @@ class CamelsInputs:
     copy only the requested batch. Do not mutate shared tensors in place.
     """
 
-    source: Meteorology
+    source: Meteorology | PreparedDataset
     features: tuple[str, ...]
     attribute_names: tuple[str, ...]
     meteorology: Tensor
@@ -144,4 +145,32 @@ def load_inputs(
         observed,
         discharge,
         valid,
+    )
+
+
+def prepared_inputs(
+    dataset: PreparedDataset, *, features: Sequence[str], attribute_names: Sequence[str] = ()
+) -> CamelsInputs:
+    """Resident tensors from a prepared dataset; nothing is fitted, transformed or filled.
+
+    Neural features and attributes are already in final model-input space, so
+    pair them with ``Normalization.identity``. Names may select
+    ``<field>_was_filled`` flags. Forcing stays physical for HBV. Discharge
+    stays physical; discharge_valid is the stored target-eligibility mask, so
+    filled or excluded targets never enter loss or evaluation. Filled inputs
+    are finite: exclude ``_was_filled`` positions from pretraining hidden masks.
+    """
+    if not features or len(set(features)) != len(features) or len(set(attribute_names)) != len(attribute_names):
+        raise ValueError("Select unique nonempty neural features and unique attributes")
+    discharge = dataset.discharge
+    return CamelsInputs(
+        dataset,
+        tuple(features),
+        tuple(attribute_names),
+        torch.from_numpy(dataset.model_inputs(features)),
+        torch.from_numpy(dataset.model_attributes(attribute_names)),
+        torch.from_numpy(np.ascontiguousarray(dataset.forcing[:, :, None, :])),
+        None,
+        None if discharge is None else torch.from_numpy(discharge.physical.astype(np.float32)),
+        None if discharge is None else torch.from_numpy(discharge.eligible),
     )
