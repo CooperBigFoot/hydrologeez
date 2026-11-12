@@ -15,6 +15,7 @@ from hydrologeez.preprocessing import (
     Transform,
     ZScore,
     fit,
+    homogeneity_flags,
     prepare,
 )
 
@@ -282,3 +283,48 @@ def test_models_consume_prepared_data_repeatedly_without_refitting(
         lstm_batch = batch_from_inputs(inputs, LSTMConfig(features=features, attributes=attributes))
         assert torch.isfinite(lstm_batch.meteorology).all()
         assert lstm_batch.discharge_valid is not None and torch.equal(lstm_batch.discharge_valid, eligible)
+
+
+def test_archive_evidence_feeds_caller_exclusions(tmp_path: Path) -> None:
+    from hydrologeez.quality_control import (
+        DischargeRecord,
+        DischargeSource,
+        HomogeneityQuality,
+        StreamflowQualityArchive,
+        write_archive,
+    )
+
+    dates = np.arange(730000, 730030, dtype=np.int64)
+    varying = np.linspace(2.0, 2.29, 30)
+    negative = varying.copy()
+    negative[3] = -1.0
+    none, no_flags = np.zeros(30, dtype=np.bool_), np.full(30, "")
+    write_archive(
+        tmp_path / "qc",
+        DischargeSource("synthetic", "m3/s", 1.0, {}),
+        [DischargeRecord("x", dates, negative, none, no_flags), DischargeRecord("y", dates, varying, none, no_flags)],
+    )
+    archive = StreamflowQualityArchive(tmp_path / "qc")
+    ids = ("y", "x")
+    daily = archive.daily(ids, "1999-09-03", "1999-10-03")  # ordinals 730000-730029
+    assessed = HomogeneityQuality(
+        ("x", "y"),
+        "yearly",
+        ("MEAN", "CV"),
+        ("snht",),
+        np.array([["suspect", "useful"], ["useful", "doubtful"]]),
+        np.zeros((2, 2), dtype=np.int64),
+        np.zeros((2, 2, 1)),
+        np.zeros((2, 2, 1), dtype=np.bool_),
+    )
+    basin = {"mean_inhomogeneous": homogeneity_flags(assessed, ids, "MEAN", ("suspect", "doubtful"))}
+    assert_array_equal(basin["mean_inhomogeneous"], [False, True])
+
+    excluded = Exclusion(daily=("negative",)).mask(daily.discharge.shape, daily.reasons, basin)
+    assert_array_equal(np.argwhere(excluded), [[3, 1]])
+    whole_basin = Exclusion(basin=("mean_inhomogeneous",)).mask(daily.discharge.shape, daily.reasons, basin)
+    assert whole_basin[:, 1].all() and not whole_basin[:, 0].any()
+    with pytest.raises(ValueError, match="index"):
+        homogeneity_flags(assessed, ids, "P50", ("suspect",))
+    with pytest.raises(ValueError, match="classification"):
+        homogeneity_flags(assessed, ids, "MEAN", ("bad",))

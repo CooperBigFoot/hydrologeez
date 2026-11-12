@@ -14,14 +14,30 @@ Daily fields are `[day, basin]`; static fields are `[basin]`. A `Field` holds va
 ```python
 import numpy as np
 
-from hydrologeez.preprocessing import Exclusion, Field, Log, PhysicalForcing, Transform, ZScore, fit, prepare
+from hydrologeez.preprocessing import (
+    Exclusion,
+    Field,
+    Log,
+    PhysicalForcing,
+    Transform,
+    ZScore,
+    fit,
+    homogeneity_flags,
+    prepare,
+)
+from hydrologeez.quality_control import StreamflowQualityArchive
 
-# Named boolean evidence from the QC archive: daily reasons [day, basin], basin assessments [basin].
-rule = Exclusion(daily=("negative", "constant_run", "seasonal_outlier"), basin=("inhomogeneous",))
-excluded = rule.mask(q_mm_day.shape, qc_daily, qc_basin)
+archive = StreamflowQualityArchive(qc_directory)
+qc = archive.daily(ids, start, stop)  # reasons: name -> [day, basin]; discharge in source units
+assessed = archive.homogeneity(ids, "yearly")
+basin = {"mean_inhomogeneous": homogeneity_flags(assessed, ids, "MEAN", ("suspect", "doubtful"))}
+rule = Exclusion(
+    daily=("provider_suspect", "negative", "constant_run", "seasonal_outlier"), basin=("mean_inhomogeneous",)
+)
+excluded = rule.mask(qc.discharge.shape, qc.reasons, basin)
 prcp = Field(meteorology.values[:, :, 0].T, meteorology.valid[:, :, 0].T, "mm/day")
 area = Field(area_km2, np.isfinite(area_km2), "km2")
-discharge = Field(q_mm_day, observed & ~excluded, "mm/day")
+discharge = Field(q_mm_day, qc.observed & ~excluded, "mm/day")  # caller converts units explicitly
 
 prepare(
     output,

@@ -6,13 +6,15 @@ explicitly authorized pool; applying or loading a ``Transform`` never refits.
 """
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
+
+from hydrologeez.quality_control import CLASSIFICATIONS, HomogeneityQuality
 
 Array = NDArray[np.float64]
 Values = NDArray[np.floating]
@@ -78,6 +80,23 @@ class Exclusion:
         for name in self.basin:
             excluded |= basin[name][None, :]
         return excluded
+
+
+def homogeneity_flags(quality: HomogeneityQuality, ids: Sequence[str], index: str, classes: Collection[str]) -> Mask:
+    """[basin] flags, in caller ids order, where ``index`` has a caller-chosen classification.
+
+    Use the result as a named basin assessment in ``Exclusion.mask``. Daily
+    archive reasons need no adapter: pass ``DailyQuality.reasons`` directly.
+    """
+    if index not in quality.names:
+        raise ValueError(f"Unknown homogeneity index: {index}")
+    if not classes or not set(classes) <= set(CLASSIFICATIONS):
+        raise ValueError(f"Choose homogeneity classifications from {CLASSIFICATIONS}")
+    positions = {gauge: i for i, gauge in enumerate(quality.ids)}
+    if not set(ids) <= positions.keys():
+        raise ValueError("Homogeneity assessments do not cover every selected basin")
+    column = quality.classification[[positions[gauge] for gauge in ids], quality.names.index(index)]
+    return np.isin(column, list(classes))
 
 
 @dataclass(frozen=True)
