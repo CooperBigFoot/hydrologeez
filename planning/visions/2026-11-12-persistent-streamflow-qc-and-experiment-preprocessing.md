@@ -14,7 +14,7 @@ The QC archive retains observations and assessments; experiments decide which ob
 
 Implement all three parts of [Gudmundsson et al. (2018), GSIM Part 2](https://doi.org/10.5194/essd-10-787-2018):
 
-- Daily discharge screening, including provider-flag interpretation and the automated checks described in section 2.
+- Daily discharge screening, including the conditional routing in sections 2.2–2.3: use reliable provider flags where available and the automated checks where reliable flags are unavailable or their use is discouraged. Do not silently run both branches and combine their exclusions; preserve the paper's treatment of partially flagged records.
 - Monthly, seasonal and annual streamflow indices, with their data-availability criteria.
 - Homogeneity assessment of those indices, including the paper's preprocessing, tests and classification.
 
