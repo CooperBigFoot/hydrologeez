@@ -27,6 +27,7 @@ class Batch:
     discharge: Tensor | None = None  # [simulation day, basin]
     discharge_valid: Tensor | None = None
     initial: Memory | None = None
+    filled: Tensor | None = None  # [basin, context day, feature], prepared-dataset placeholders
 
 
 class Training:
@@ -72,15 +73,15 @@ class Training:
         if self.stage == "pretrain":
             if hidden is None:
                 raise ValueError("pretraining needs an explicit synthetic hidden mask")
-            prepared = prepare(batch.meteorology, batch.padding, hidden, self.model.normalization)
+            prepared = prepare(batch.meteorology, batch.padding, hidden, self.model.normalization, batch.filled)
             prediction = self.model.pretext_head(
-                self.model.represent(batch.meteorology, batch.attributes, batch.padding, hidden)
+                self.model.represent(batch.meteorology, batch.attributes, batch.padding, hidden, batch.filled)
             )
             return masked_mse(prediction, prepared.normalized, prepared.targets)
         if batch.discharge is None or batch.discharge_valid is None:
             raise ValueError("discharge training needs observations and validity mask")
         prediction = self.model(
-            batch.meteorology, batch.attributes, batch.padding, batch.forcing, batch.area, batch.initial
+            batch.meteorology, batch.attributes, batch.padding, batch.forcing, batch.area, batch.initial, batch.filled
         )
         if self.discharge_loss == "soft_npe":
             return soft_npe_loss(prediction.outlet, batch.discharge, batch.discharge_valid, softness=self.softness)
@@ -108,7 +109,9 @@ class Training:
     @torch.no_grad()
     def predict(self, batch: Batch) -> Result:
         self.model.eval()
-        return self.model(batch.meteorology, batch.attributes, batch.padding, batch.forcing, batch.area, batch.initial)
+        return self.model(
+            batch.meteorology, batch.attributes, batch.padding, batch.forcing, batch.area, batch.initial, batch.filled
+        )
 
     def save(self, path: str | Path) -> None:
         """Persist architecture, ordered features, scaling, bounds, stage and Adam.
