@@ -3,10 +3,11 @@ import pytest
 from numpy.testing import assert_allclose
 
 from hydrologeez.quality_control.homogeneity import (
-    PUBLISHED_CRITICAL_VALUES,
     Homogeneity,
     assess,
+    classify,
     critical_values,
+    detrend,
     homogeneity_statistics,
     prewhiten,
 )
@@ -19,8 +20,37 @@ def test_statistics_match_hand_computed_step_series() -> None:
 
 
 def test_critical_values_use_published_table_with_linear_interpolation() -> None:
-    assert_allclose(critical_values(20), PUBLISHED_CRITICAL_VALUES[0, 1:])
-    assert_allclose(critical_values(25), PUBLISHED_CRITICAL_VALUES[:2, 1:].mean(axis=0))
+    n20 = np.array([9.56, 1.60, 71.0, 1.04])
+    n30 = np.array([10.45, 1.70, 133.0, 1.20])
+    assert_allclose(critical_values(20), n20)
+    assert_allclose(critical_values(25), 0.5 * (n20 + n30))
+
+
+def test_detrend_drops_subseries_with_fewer_than_three_values() -> None:
+    values = np.array([1.0, 5.0, 2.0, 9.0, 3.0, np.nan])
+    year = np.array([2000, 2000, 2001, 2001, 2002, 2002])
+    position = np.array([0, 1, 0, 1, 0, 1])  # position 0 has 3 values; position 1 has 2
+    residuals = detrend(values, year, position)
+    assert_allclose(residuals[position == 0], [0.0, 0.0, 0.0], atol=1e-12)
+    assert np.isnan(residuals[position == 1]).all()
+
+    years = np.repeat(np.arange(2000, 2021), 2)
+    positions = np.tile([0, 1], 21)
+    series = np.where(positions == 0, np.sin(np.arange(42)), 10.0 + np.arange(42))
+    reliable = (positions == 0) | (years < 2002)  # 21 reliable in position 0, 2 in position 1 -> 21 after detrend
+    assessment = assess(series, reliable, years, positions)
+    assert assessment.count == 21
+
+
+def test_classification_maps_rejection_counts_and_numerical_errors() -> None:
+    assert [classify(k) for k in range(5)] == ["useful", "useful", "doubtful", "suspect", "suspect"]
+    linear = yearly(2.0 + 0.5 * np.arange(25.0), np.ones(25, dtype=np.bool_))
+    assert (linear.classification, linear.count) == ("constant", 25)
+    assert np.isnan(linear.statistics).all()
+    overflow = yearly(np.append(np.ones(24), 1e200), np.ones(25, dtype=np.bool_))
+    assert (overflow.classification, overflow.count) == ("error", 25)
+    assert np.isnan(overflow.statistics).all()
+    assert not overflow.rejected.any()
 
 
 def yearly(values: np.ndarray, reliable: np.ndarray) -> Homogeneity:

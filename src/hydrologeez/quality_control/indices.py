@@ -1,10 +1,12 @@
 """Yearly, seasonal and monthly streamflow indices (GSIM Part 2, Sect. 3, Tables 3-4).
 
 Indices use only usable days (observed, finite, not suspect); suspect values remain in the
-archive. Seasons are DJF, MAM, JJA and SON; a DJF season belongs to the year of its January.
-Each period spans the calendar, so days outside the record count as unusable. Index values are
-computed whenever defined, and ``counts`` give the usable days. A period is reliable with at
-least 350 (yearly), 85 (seasonal) or 25 (monthly) usable days.
+archive. Dimensional index values remain in the discharge source's units (whereas GSIM Table 3
+reports m³/s); homogeneity statistics are scale-invariant. Seasons are DJF, MAM, JJA and SON;
+a DJF season belongs to the year of its January. Each period spans the calendar, so days
+outside the record count as unusable. Index values are computed whenever defined, and
+``counts`` give the usable days. A period is reliable with at least 350 (yearly), 85
+(seasonal) or 25 (monthly) usable days.
 
 Numerical conventions where the paper is silent: SD uses ddof=1; percentiles and IQR use
 linear interpolation (numpy default, R type 7); MIN7/MAX7 use the backward 7-day mean over

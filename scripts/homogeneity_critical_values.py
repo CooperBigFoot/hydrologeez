@@ -5,8 +5,9 @@ obtained by simulation (SNHT, Pettitt) or from Buishand (1982). Index series wit
 more than 100 reliable values (most monthly series) need values for larger n.
 This script simulates iid standard normal series with the statistics exactly as
 implemented in ``hydrologeez.quality_control.homogeneity`` and reports the 99th
-percentile (1st percentile for the von Neumann ratio). Run with ``--check`` to
-compare the simulation against the published n <= 100 values first.
+percentile for SNHT and Buishand, the 98th percentile for Pettitt (matching the
+published one-sided 1% table), and the 1st percentile for the von Neumann ratio.
+Run with ``--check`` to compare the simulation against the published n <= 100 values first.
 """
 
 import argparse
@@ -36,7 +37,9 @@ def main() -> None:
     parser.add_argument("--replicates", type=int, default=100_000)
     parser.add_argument("--seed", type=int, default=20180417)
     parser.add_argument("--check", action="store_true")
-    parser.add_argument("--sizes", type=int, nargs="*", default=[150, 200, 300, 400, 500, 700, 1000, 1500, 2000, 3000])
+    parser.add_argument(
+        "--sizes", type=int, nargs="*", default=[150, 200, 300, 400, 500, 700, 1000, 1500, 2000, 3000, 5000]
+    )
     args = parser.parse_args()
     sizes = [int(n) for n in PUBLISHED_CRITICAL_VALUES[:, 0]] if args.check else args.sizes
     for n in sizes:

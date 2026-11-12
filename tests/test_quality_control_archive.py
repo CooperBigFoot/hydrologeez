@@ -1,4 +1,5 @@
 from datetime import date
+from importlib.metadata import version
 from pathlib import Path
 
 import numpy as np
@@ -20,7 +21,7 @@ from hydrologeez.quality_control import (
 from tests.test_camels import source_files
 
 SOURCE = DischargeSource("synthetic test source", "m3/s", 1.0, {"A": "reliable", "P": "suspect"})
-START, STOP = date(2001, 1, 1).toordinal(), date(2003, 1, 1).toordinal()
+START, STOP = date(2001, 1, 1).toordinal(), date(2004, 1, 1).toordinal()
 
 
 def records() -> list[DischargeRecord]:
@@ -49,7 +50,7 @@ def test_archive_preserves_observations_and_separates_reasons(tmp_path: Path) ->
     write_archive(tmp_path / "qc", SOURCE, records())
     archive = StreamflowQualityArchive(tmp_path / "qc")
     automated, flagged = records()
-    daily = archive.daily(["flagged", "automated"], "2001-01-01", "2003-01-01")
+    daily = archive.daily(["flagged", "automated"], "2001-01-01", "2004-01-01")
     assert daily.routes == ("provider_flags", "automated")
     assert_array_equal(daily.discharge[:, 1], automated.discharge)
     assert_array_equal(daily.missing[:, 1], automated.missing)
@@ -75,7 +76,8 @@ def test_archive_preserves_observations_and_separates_reasons(tmp_path: Path) ->
 
     homogeneity = archive.homogeneity(["automated", "flagged"], "monthly")
     direct = assess_indices(compute_indices(*daily_inputs(automated), "monthly"))
-    assert homogeneity.count[0].tolist() == [h.count for h in direct] == [23] * 8  # April 2001 has 20 usable days
+    # April 2001 has 20 usable days, leaving 2 reliable Aprils (dropped by detrending) and 33 values overall.
+    assert homogeneity.count[0].tolist() == [h.count for h in direct] == [33] * 8
     assert homogeneity.classification[0].tolist() == [h.classification for h in direct]
     assert_array_equal(homogeneity.statistics[0], [h.statistics for h in direct])
     assert_array_equal(homogeneity.rejected[0], [h.rejected for h in direct])
@@ -83,6 +85,7 @@ def test_archive_preserves_observations_and_separates_reasons(tmp_path: Path) ->
     assert yearly.classification[0, 0] == "not sufficient data"
 
     method = archive.metadata["method"]
+    assert archive.metadata["hydrologeez_version"] == version("hydrologeez")
     assert method["outlier_offset"] == {"value": 0.01, "units": "m3/s"}
     assert archive.metadata["source"]["provenance"] == "synthetic test source"
     with pytest.raises(FileExistsError):
@@ -93,10 +96,10 @@ def test_results_do_not_depend_on_batch_boundaries(tmp_path: Path) -> None:
     write_archive(tmp_path / "together", SOURCE, records())
     write_archive(tmp_path / "alone", SOURCE, records()[:1])
     together, alone = StreamflowQualityArchive(tmp_path / "together"), StreamflowQualityArchive(tmp_path / "alone")
-    full = together.daily(["automated"], "2001-01-01", "2003-01-01")
-    single = alone.daily(["automated"], "2001-01-01", "2003-01-01")
+    full = together.daily(["automated"], "2001-01-01", "2004-01-01")
+    single = alone.daily(["automated"], "2001-01-01", "2004-01-01")
     parts = [
-        together.daily(["automated"], a, b) for a, b in [("2001-01-01", "2001-08-17"), ("2001-08-17", "2003-01-01")]
+        together.daily(["automated"], a, b) for a, b in [("2001-01-01", "2001-08-17"), ("2001-08-17", "2004-01-01")]
     ]
     for name in ("discharge", "missing", "flags", "suspect"):
         assert_array_equal(getattr(full, name), getattr(single, name))

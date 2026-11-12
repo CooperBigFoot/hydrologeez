@@ -1,9 +1,10 @@
 """Persistent retrospective streamflow QC archive and its reader.
 
 The archive keeps original discharge, source missingness and provider flags beside separate
-daily QC reasons, index values with usable-day counts and homogeneity assessments. It never
-drops basins, repairs values or applies exclusions; experiments build their own masks from
-the reader's aligned arrays.
+daily QC reasons, index values with usable-day counts and homogeneity assessments. Discharge
+and dimensional index values remain in the source units (whereas GSIM Table 3 reports m³/s);
+homogeneity statistics are scale-invariant. The archive never drops basins, repairs values or
+applies exclusions; experiments build their own masks from the reader's aligned arrays.
 
 Layout: ``metadata.json`` (written last), ``basins/<position>/`` with daily arrays and
 per-resolution index arrays, and ``homogeneity/<resolution>_*.npy`` arrays [basin, index, ...].
@@ -13,6 +14,7 @@ import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +73,7 @@ def _method() -> dict[str, Any]:
             "tests": list(TESTS),
             "classifications": list(CLASSIFICATIONS),
             "minimum_values": MINIMUM_VALUES,
+            "minimum_subseries_values_for_detrend": 3,
             "level": 0.01,
             "critical_values": CRITICAL_VALUES.tolist(),
         },
@@ -122,6 +125,7 @@ def write_archive(output: Path, source: DischargeSource, records: Iterable[Disch
         np.save(homogeneity / f"{resolution}_rejected.npy", np.array([[h.rejected for h in row] for row in rows]))
     metadata = {
         "format": FORMAT,
+        "hydrologeez_version": version("hydrologeez"),
         "source": {
             "provenance": source.provenance,
             "units": source.units,
@@ -139,6 +143,8 @@ def write_archive(output: Path, source: DischargeSource, records: Iterable[Disch
 class DailyQuality:
     """Daily arrays [day, basin]; days outside a basin's record are missing with NaN discharge.
 
+    ``missing`` merges dates absent from the source with provider-reported missing days (for
+    example CAMELS ``"M"`` days, which retain their ``-999`` discharge and ``"M"`` flag).
     ``reasons`` maps each reason to its flags. Only the basin's route is evaluated:
     ``provider_suspect`` for "provider_flags", the automated reasons for "automated".
     """

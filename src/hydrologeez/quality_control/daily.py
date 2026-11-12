@@ -1,9 +1,9 @@
 """Daily discharge screening (GSIM Part 2, Sect. 2).
 
 Each basin record follows one route. Records whose source supplies reliable provider flags,
-and that carry at least one reliable or suspect flag, use those flags (Sect. 2.2): unflagged
-days count as reliable and only provider-suspect days are rejected. All other records use
-the automated checks of Sect. 2.3:
+and that carry at least one reliable or suspect flag, use those flags (Sect. 2.2) and skip the
+automated checks (paper behaviour): unflagged days count as reliable and only provider-suspect
+days are rejected. All other records use the automated checks of Sect. 2.3:
 
 - ``negative``: Q < 0.
 - ``constant_run``: more than 10 consecutive calendar days with the same positive value.

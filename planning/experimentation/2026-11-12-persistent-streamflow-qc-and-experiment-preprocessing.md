@@ -30,7 +30,22 @@ replicates per n):
 
 Decision: keep the published rows for 20 ≤ n ≤ 100. Add simulated rows for n = 150...5000,
 using the same quantiles as the published table (the 98th percentile for Pettitt). Interpolate
-linearly in n. The rows and the script that produced them are in the repository.
+linearly in n, which is mildly conservative on the convex Pettitt curve and clamps above
+n = 5000. The rows and the script that produced them are in the repository.
+
+### Sparse seasonal or monthly subseries under detrending
+
+Question: GSIM Part 2 removes a least-squares linear trend (`x = b + a t`) separately from each
+season or month subseries whenever the whole index series has at least 20 reliable values. How
+should a season or month with only 1 or 2 reliable values be treated?
+
+Observations: a 2-parameter line fits 1 or 2 points with zero residuals (`[0.]` or `[0., 0.]`),
+injecting artificial zeros into the AR(1) likelihood and the four homogeneity statistics even
+though the subseries had no residual degrees of freedom.
+
+Decision: require at least 3 reliable values in a season or month subseries before fitting its
+trend; set sparser subseries to missing after detrending and re-check the 20-value minimum and
+residual constancy before pre-whitening.
 
 ### Power of the prescribed pre-processing
 

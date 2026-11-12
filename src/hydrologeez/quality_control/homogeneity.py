@@ -5,15 +5,20 @@ the series is "not sufficient data"; if they are all equal it is "constant". Oth
 trend and mean (x = b + a t, t in years) is removed by least squares from the whole yearly
 series, or separately from each season or month. The result is pre-whitened with a lag-1
 autoregressive model fitted by exact Gaussian maximum likelihood, missing values are removed,
-and the SNHT, Buishand range, Pettitt and von Neumann ratio tests are applied at the 1% level.
-Zero or one rejection is "useful", two "doubtful", three or four "suspect"; a numerical failure
-is "error".
+and the SNHT, Buishand range, Pettitt and von Neumann ratio tests are applied at the 1% level
+to the scale-invariant test statistics. Zero or one rejection is "useful", two "doubtful",
+three or four "suspect"; a numerical failure is "error".
 
-Conventions where the paper is silent: the detrended series has zero mean, so the AR(1) model
-has no intercept. Across a gap of k periods the innovation is x_t - phi^k x_{t-k}, and
-residuals are innovations scaled to the common innovation variance (Kalman-filter
-standardization, as in R's ``arima``). Critical values interpolate linearly in n between the
-published rows (n = 20...100) and simulated rows beyond (see ``SIMULATED_CRITICAL_VALUES``).
+Conventions where the paper is silent: a season or month subseries with fewer than 3 reliable
+values has no residual degrees of freedom under a 2-parameter line and is set to missing after
+detrending; if fewer than 20 values remain it is "not sufficient data", and if the detrended
+residuals are all equal within roundoff it is "constant". The detrended series has zero mean,
+so the AR(1) model has no intercept. Across a gap of k periods the innovation is
+x_t - phi^k x_{t-k}, and residuals are innovations scaled to the common innovation variance
+(Kalman-filter standardization, as in R's ``arima``). Critical values interpolate linearly in n
+between the published rows (n = 20...100) and simulated rows beyond (see
+``SIMULATED_CRITICAL_VALUES``), which is mildly conservative on the convex Pettitt curve and
+clamps above n = 5000.
 
 A rejected test is statistical evidence of a change, not proof of measurement error: real
 regulation or land-use change can alter a river's behaviour.
@@ -111,12 +116,17 @@ def critical_values(n: int) -> NDArray[np.float64]:
     return np.array([np.interp(n, CRITICAL_VALUES[:, 0], CRITICAL_VALUES[:, column]) for column in range(1, 5)])
 
 
+def classify(rejections: int) -> Classification:
+    """Map the number of rejected tests (0..4) to its ECA&D / GSIM class."""
+    return CLASSIFICATIONS[min(max(rejections - 1, 0), 2)]
+
+
 def detrend(values: NDArray[np.float64], year: NDArray[np.int64], position: NDArray[np.int64]) -> NDArray[np.float64]:
-    """Remove a least-squares line in years from each season/month subseries; NaN stays missing."""
+    """Remove a least-squares line in years from each season/month subseries with >= 3 values."""
     residuals = np.full(len(values), np.nan)
     for p in np.unique(position):
         members = np.flatnonzero((position == p) & np.isfinite(values))
-        if not len(members):
+        if len(members) < 3:
             continue
         t = year[members] - year[members].mean()
         design = np.column_stack([np.ones(len(members)), t])
@@ -161,16 +171,24 @@ def assess(
     untested = np.full(len(TESTS), np.nan), np.zeros(len(TESTS), dtype=np.bool_)
     if count < MINIMUM_VALUES:
         return Homogeneity("not sufficient data", count, *untested)
-    if np.ptp(values[kept]) == 0:
+    scale = float(np.ptp(values[kept]))
+    if scale == 0:
         return Homogeneity("constant", count, *untested)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        residuals, _ = prewhiten(detrend(np.where(kept, values, np.nan), year, position))
+    detrended = detrend(np.where(kept, values, np.nan), year, position)
+    kept = np.isfinite(detrended)
+    count = int(kept.sum())
+    if count < MINIMUM_VALUES:
+        return Homogeneity("not sufficient data", count, *untested)
+    if np.ptp(detrended[kept]) <= 1e-12 * scale:
+        return Homogeneity("constant", count, *untested)
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        residuals, _ = prewhiten(detrended)
         statistics = homogeneity_statistics(residuals[kept])
     if not np.isfinite(statistics).all():
         return Homogeneity("error", count, *untested)
     critical = critical_values(count)
     rejected = np.append(statistics[:3] > critical[:3], statistics[3] < critical[3])
-    return Homogeneity(CLASSIFICATIONS[min(max(int(rejected.sum()) - 1, 0), 2)], count, statistics, rejected)
+    return Homogeneity(classify(int(rejected.sum())), count, statistics, rejected)
 
 
 def assess_indices(series: IndexSeries) -> list[Homogeneity]:
