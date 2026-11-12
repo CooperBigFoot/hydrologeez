@@ -10,6 +10,7 @@ from torch import Tensor
 
 from hydrologeez.hybrid.data import Normalization
 from hydrologeez.losses import masked_mse, soft_npe_loss
+from hydrologeez.preprocessing import Standardization, Transform
 
 from .model import DischargeLSTM, ModelConfig
 
@@ -38,15 +39,24 @@ class Training:
         learning_rate: float = 0.001,
         discharge_loss: Literal["mse", "soft_npe"] = "mse",
         softness: float = 0.1,
+        discharge_transform: Transform | None = None,
     ) -> None:
         if discharge_loss not in ("mse", "soft_npe"):
             raise ValueError("unknown discharge loss")
         if not math.isfinite(softness) or softness <= 0:
             raise ValueError("softness must be finite and positive")
+        if discharge_transform is not None:
+            if discharge_loss != "mse":
+                raise ValueError("discharge_transform requires mse discharge_loss")
+            if any(isinstance(step, Standardization) and step.scope != "global" for step in discharge_transform.steps):
+                raise ValueError("Runtime discharge_transform requires global standardization scope")
+            if model.config.output_activation != "softplus":
+                raise ValueError("discharge_transform requires softplus output_activation for physical discharge")
         self.model = model
         self.learning_rate = learning_rate
         self.discharge_loss = discharge_loss
         self.softness = softness
+        self.discharge_transform = discharge_transform
         self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     def loss(self, batch: Batch) -> Tensor:
@@ -56,7 +66,14 @@ class Training:
         valid = batch.discharge_valid & ~batch.padding.T
         if self.discharge_loss == "soft_npe":
             return soft_npe_loss(prediction, batch.discharge, valid, softness=self.softness)
-        return masked_mse(prediction, batch.discharge, valid & torch.isfinite(batch.discharge))
+        valid = valid & torch.isfinite(batch.discharge)
+        if not bool(valid.any()):
+            raise ValueError("loss needs selected targets")
+        if self.discharge_transform is not None:
+            predicted_target = self.discharge_transform.forward_tensor(prediction[valid])
+            observed_target = self.discharge_transform.forward_tensor(batch.discharge[valid])
+            return (predicted_target - observed_target).square().mean()
+        return masked_mse(prediction, batch.discharge, valid)
 
     def train_step(self, batch: Batch) -> float:
         self.model.train()
@@ -87,6 +104,7 @@ class Training:
                 "version": 1,
                 "discharge_loss": self.discharge_loss,
                 "softness": self.softness,
+                "discharge_transform": None if self.discharge_transform is None else self.discharge_transform.to_json(),
                 "config": asdict(self.model.config),
                 "model": self.model.state_dict(),
                 "learning_rate": self.learning_rate,
@@ -108,11 +126,13 @@ class Training:
         normalization = Normalization(state["mean"], state["scale"], config.features)
         model = DischargeLSTM(config, normalization).to(device=device, dtype=state["mean"].dtype)
         model.load_state_dict(state)
+        raw_transform = saved.get("discharge_transform")
         training = cls(
             model,
             learning_rate=saved["learning_rate"],
             discharge_loss=saved["discharge_loss"],
             softness=saved["softness"],
+            discharge_transform=None if raw_transform is None else Transform.from_json(raw_transform),
         )
         training.optimizer.load_state_dict(saved["optimizer"])
         return training
